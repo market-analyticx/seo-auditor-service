@@ -1,0 +1,12 @@
+node_modules/
+.env
+.env.*
+logs/
+exports/
+reports/
+*.log
+.DS_Store
+credentials.json
+*.pem
+*.key
+.vscode/
