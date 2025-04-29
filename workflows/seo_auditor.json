@@ -1,0 +1,452 @@
+{
+  "name": "seo-auditor",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "crawl-site",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "84b9c031-3ae4-4b96-a709-b7403c09306e",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        2580,
+        1140
+      ],
+      "webhookId": "crawl-site-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract and log webhook data\nconst inputData = $input.item.json;\n\n// Log to console for debugging\nconsole.log('Webhook received:', JSON.stringify(inputData, null, 2));\n\nreturn {\n  json: {\n    ...inputData,\n    receivedAt: new Date().toISOString()\n  }\n};"
+      },
+      "id": "358f3837-a5f8-4757-a05f-b9589f278548",
+      "name": "Log Webhook Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2780,
+        1140
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract URL from various possible locations\nconst input = $input.item.json;\nlet url;\n\n// Try different locations\nif (input.url) {\n  url = input.url;\n} else if (input.body && input.body.url) {\n  url = input.body.url;\n} else if (input.query && input.query.url) {\n  url = input.query.url;\n} else {\n  throw new Error('URL is required');\n}\n\n// Clean up the URL\nfunction cleanUrl(dirtyUrl) {\n  if (!dirtyUrl) return '';\n  \n  // Convert to string if it's not already\n  let clean = String(dirtyUrl);\n  \n  // Remove surrounding quotes if present\n  clean = clean.replace(/^[\"']|[\"']$/g, '');\n  \n  // Remove any non-printable characters\n  clean = clean.replace(/[^\\x20-\\x7E]/g, '');\n  \n  // Trim whitespace\n  clean = clean.trim();\n  \n  // Remove any zero-width spaces, BOM, etc\n  clean = clean.replace(/[\\u200B-\\u200D\\uFEFF]/g, '');\n  \n  return clean;\n}\n\nurl = cleanUrl(url);\n\n// Debug information\nconsole.log('Original URL:', JSON.stringify(input.url));\nconsole.log('Cleaned URL:', url);\nconsole.log('URL length:', url.length);\nconsole.log('URL type:', typeof url);\n\n// Alternative URL validation using regex\nfunction isValidUrl(string) {\n  try {\n    // Basic URL pattern match\n    const pattern = /^(https?:\\/\\/)?([\\da-z\\.-]+)\\.([a-z\\.]{2,6})([\\/\\w \\.-]*)*\\/?$/;\n    return pattern.test(string);\n  } catch (e) {\n    return false;\n  }\n}\n\n// Simple URL validation\nif (!isValidUrl(url)) {\n  console.error('URL validation failed using regex');\n  console.error('URL being validated:', url);\n  console.error('URL characters:', url.split('').map(c => `${c} (${c.charCodeAt(0)})`).join(', '));\n  throw new Error(`Invalid URL format: \"${url}\"`);\n}\n\n// Generate slug\nconst slug = url\n  .replace(/https?:\\/\\//, '')\n  .replace(/[^a-zA-Z0-9]/g, '_')\n  .replace(/_+/g, '_')\n  .replace(/^_+|_+$/g, '')\n  .toLowerCase();\n\n// Generate job ID\nconst jobId = `job_${Date.now()}_${Math.random().toString(36).substring(7)}`;\n\nconst result = { url, slug, jobId, timestamp: new Date().toISOString() };\nconsole.log('Validation complete:', result);\n\nreturn result;"
+      },
+      "id": "c10f3df4-6e5f-4457-b3be-bf0683deea06",
+      "name": "Validate with Logging",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2980,
+        1140
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "markdownToHtml",
+        "markdown": "=## Execution Log  **Job ID:** {{ $json.jobId }} **URL:** {{ $json.url }} **Slug:** {{ $json.slug }} **Timestamp:** {{ $json.timestamp }}  ### Current Step: Crawling Website",
+        "options": {}
+      },
+      "id": "f597c8a0-b7d8-449f-a4a3-1eb30f0d8648",
+      "name": "Create Log Entry",
+      "type": "n8n-nodes-base.markdown",
+      "typeVersion": 1,
+      "position": [
+        3180,
+        940
+      ]
+    },
+    {
+      "parameters": {
+        "command": "=node ./scripts/crawl.js \"{{ $json.url }}\" \"{{ $json.slug }}\""
+      },
+      "id": "d0650315-38ef-46bc-ab45-871b71072eb7",
+      "name": "Run Crawl",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        3180,
+        1140
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.stderr }}",
+              "operation": "isEmpty"
+            }
+          ]
+        }
+      },
+      "id": "6b1ac22e-6660-439d-9c8a-5e22d1237b04",
+      "name": "Check Crawl Success",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        3380,
+        1140
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "fileFolder",
+        "queryString": "={{ $('Validate with Logging').item.json.slug }}",
+        "returnAll": true,
+        "filter": {
+          "driveId": {
+            "__rl": true,
+            "value": "My Drive",
+            "mode": "list"
+          },
+          "folderId": {
+            "mode": "list",
+            "value": "root"
+          },
+          "whatToSearch": "folders"
+        },
+        "options": {}
+      },
+      "id": "30247e77-db58-446a-9e21-2960a37b6746",
+      "name": "Search Folder",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        3580,
+        1140
+      ],
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "57IRpCP3knFpJozX",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.id }}",
+              "operation": "isNotEmpty"
+            }
+          ]
+        }
+      },
+      "id": "867d52f5-4a3f-4fc1-9f11-a852beafbaef",
+      "name": "Folder Exists?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        3780,
+        1140
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "folder",
+        "operation": "deleteFolder",
+        "folderNoRootId": {
+          "__rl": true,
+          "value": "={{ $json.id }}",
+          "mode": "id"
+        },
+        "options": {}
+      },
+      "id": "bcf05d30-23d0-4014-888a-7b696f7b67f7",
+      "name": "Delete Folder",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        3980,
+        1040
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "57IRpCP3knFpJozX",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "folder",
+        "name": "={{ $('Validate with Logging').item.json.slug }}",
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "root",
+          "mode": "list"
+        },
+        "options": {}
+      },
+      "id": "13616035-fdb7-46d9-b069-bea3627543e8",
+      "name": "Create Folder",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        4180,
+        1140
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "57IRpCP3knFpJozX",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "filePath": "=./exports/{{ $('Validate with Logging').item.json.slug }}/internal_all.csv"
+      },
+      "id": "dd7b7f37-6b8b-431b-8198-e207e047fd7a",
+      "name": "Read CSV",
+      "type": "n8n-nodes-base.readBinaryFile",
+      "typeVersion": 1,
+      "position": [
+        4380,
+        1140
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "binaryData": true,
+        "name": "={{ $('Validate with Logging').item.json.slug }}_internal_all.csv",
+        "parents": [
+          "={{ $('Create Folder').item.json.id }}"
+        ],
+        "options": {}
+      },
+      "id": "9f9e476c-94b3-4882-a9b0-c715f45a5e50",
+      "name": "Upload CSV",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 1,
+      "position": [
+        4580,
+        1140
+      ],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "57IRpCP3knFpJozX",
+          "name": "Google Drive account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "command": "=node ./scripts/auditCsvChunks.js {{ $('validate-with-logging').item.json.slug }}"
+      },
+      "id": "8d80fa60-a5d6-41e0-8d4c-a64631205932",
+      "name": "Run Audit",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        4780,
+        1140
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Create final response\nconst response = {\n  status: 'success',\n  jobId: $('validate-with-logging').item.json.jobId,\n  slug: $('validate-with-logging').item.json.slug,\n  url: $('validate-with-logging').item.json.url,\n  timestamp: new Date().toISOString(),\n  googleDrive: {\n    folderId: $('create-folder').item.json.id,\n    folderUrl: $('create-folder').item.json.webViewLink,\n  }\n};\n\nconsole.log('Workflow complete:', response);\nreturn response;"
+      },
+      "id": "435d0eec-d7c8-465c-9fe5-432c4dd10d6b",
+      "name": "Prepare Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4980,
+        1140
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Create error response\nconst errorInfo = {\n  status: 'error',\n  timestamp: new Date().toISOString(),\n  error: $json.error || $json.stderr || 'Unknown error occurred',\n  details: $json\n};\n\nconsole.error('Workflow error:', errorInfo);\nreturn errorInfo;"
+      },
+      "id": "8f6e5ac2-8efa-4307-9eb4-b3f40849a783",
+      "name": "Error Handler",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3580,
+        1320
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Log Webhook Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Webhook Input": {
+      "main": [
+        [
+          {
+            "node": "Validate with Logging",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate with Logging": {
+      "main": [
+        [
+          {
+            "node": "Create Log Entry",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Run Crawl",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run Crawl": {
+      "main": [
+        [
+          {
+            "node": "Check Crawl Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Crawl Success": {
+      "main": [
+        [
+          {
+            "node": "Search Folder",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error Handler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search Folder": {
+      "main": [
+        [
+          {
+            "node": "Folder Exists?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Folder Exists?": {
+      "main": [
+        [
+          {
+            "node": "Delete Folder",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Create Folder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delete Folder": {
+      "main": [
+        [
+          {
+            "node": "Create Folder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Folder": {
+      "main": [
+        [
+          {
+            "node": "Read CSV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read CSV": {
+      "main": [
+        [
+          {
+            "node": "Upload CSV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload CSV": {
+      "main": [
+        [
+          {
+            "node": "Run Audit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run Audit": {
+      "main": [
+        [
+          {
+            "node": "Prepare Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "33d2b30d-6c49-458b-bcf9-7c42be1bf986",
+  "meta": {
+    "instanceId": "1916c662d0f9d678b92a758c516ce69155f9797ac778267240054cd7ce15f811"
+  },
+  "id": "C7urvpsqhwzkvYzY",
+  "tags": []
+}
