@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SEO Auditor Client</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            border-radius: 8px;
+            padding: 30px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+            color: #333;
+        }
+        input[type="text"] {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+            font-size: 16px;
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: bold;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        .spinner {
+            border: 4px solid rgba(0, 0, 0, 0.1);
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            border-left-color: #09f;
+            animation: spin 1s linear infinite;
+            display: none;
+            margin: 20px auto;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .results {
+            margin-top: 20px;
+            display: none;
+        }
+        .summary-card {
+            background: #e8f5e8;
+            border: 1px solid #4CAF50;
+            border-radius: 4px;
+            padding: 15px;
+            margin-bottom: 20px;
+        }
+        .score {
+            font-size: 24px;
+            font-weight: bold;
+            color: #4CAF50;
+        }
+        .tabs {
+            display: flex;
+            border-bottom: 2px solid #ddd;
+            margin-bottom: 20px;
+        }
+        .tab {
+            padding: 10px 20px;
+            cursor: pointer;
+            background: #f5f5f5;
+            border: none;
+            border-bottom: 2px solid transparent;
+        }
+        .tab.active {
+            background: white;
+            border-bottom-color: #4CAF50;
+        }
+        .tab-content {
+            display: none;
+        }
+        .tab-content.active {
+            display: block;
+        }
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        .stat-card {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 4px;
+            text-align: center;
+        }
+        .stat-number {
+            font-size: 28px;
+            font-weight: bold;
+            color: #4CAF50;
+        }
+        .page-analysis {
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            margin-bottom: 15px;
+            padding: 15px;
+        }
+        .url {
+            color: #1976D2;
+            text-decoration: none;
+            word-break: break-all;
+        }
+    </style>
+</head>
+<body>
+    <h1>SEO Auditor Client</h1>
+    
+    <div class="container">
+        <div class="form-group">
+            <label for="url">Website URL:</label>
+            <input type="text" id="url" placeholder="https://example.com" required>
+        </div>
+        <button id="crawlBtn">Start SEO Crawl & Analysis</button>
+        <div class="spinner" id="spinner"></div>
+    </div>
+
+    <div id="results" class="results">
+        <div class="container">
+            <div id="summary" class="summary-card"></div>
+            
+            <div class="tabs">
+                <button class="tab active" onclick="showTab('overview')">Overview</button>
+                <button class="tab" onclick="showTab('pages')">Page Analysis</button>
+                <button class="tab" onclick="showTab('site-analysis')">Site Analysis</button>
+                <button class="tab" onclick="showTab('raw-data')">Raw Data</button>
+            </div>
+            
+            <div id="overview" class="tab-content active">
+                <div id="stats-grid" class="stats-grid"></div>
+            </div>
+            
+            <div id="pages" class="tab-content">
+                <div id="page-analyses"></div>
+            </div>
+            
+            <div id="site-analysis" class="tab-content">
+                <div id="site-analysis-content"></div>
+            </div>
+            
+            <div id="raw-data" class="tab-content">
+                <pre id="raw-data-content"></pre>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.getElementById('crawlBtn').addEventListener('click', function() {
+            const url = document.getElementById('url').value;
+            if (!url) {
+                alert('Please enter a URL');
+                return;
+            }
+
+            // Show spinner and disable button
+            document.getElementById('spinner').style.display = 'block';
+            document.getElementById('results').style.display = 'none';
+            document.getElementById('crawlBtn').disabled = true;
+            document.getElementById('crawlBtn').textContent = 'Processing...';
+
+            const host = window.location.origin;
+            
+            fetch(`${host}/crawl-site`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ url: url }),
+            })
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error('Network response was not ok');
+                }
+                return response.json();
+            })
+            .then(data => {
+                // Hide spinner and re-enable button
+                document.getElementById('spinner').style.display = 'none';
+                document.getElementById('crawlBtn').disabled = false;
+                document.getElementById('crawlBtn').textContent = 'Start SEO Crawl & Analysis';
+                
+                // Display results
+                if (data.auditResult && data.auditResult.results) {
+                    displayResults(data.auditResult.results);
+                } else {
+                    document.getElementById('raw-data-content').textContent = JSON.stringify(data, null, 2);
+                    showTab('raw-data');
+                    document.getElementById('results').style.display = 'block';
+                }
+            })
+            .catch(error => {
+                // Hide spinner and re-enable button
+                document.getElementById('spinner').style.display = 'none';
+                document.getElementById('crawlBtn').disabled = false;
+                document.getElementById('crawlBtn').textContent = 'Start SEO Crawl & Analysis';
+                
+                alert('Error: ' + error.message);
+            });
+        });
+
+        function displayResults(results) {
+            // Display summary
+            const summary = document.getElementById('summary');
+            summary.innerHTML = `
+                <h2>Analysis Complete for ${results.slug}</h2>
+                <p><strong>Average SEO Score:</strong> <span class="score">${results.overview.averageScore || 'N/A'}/100</span></p>
+                <p><strong>Total Pages Analyzed:</strong> ${results.overview.totalPages}</p>
+                <p><strong>Analysis Date:</strong> ${new Date(results.timestamp).toLocaleString()}</p>
+            `;
+
+            // Display statistics
+            displayStatistics(results.statistics);
+            
+            // Display page analyses
+            displayPageAnalyses(results.pageAnalyses);
+            
+            // Display site analysis
+            displaySiteAnalysis(results.siteAnalysis);
+            
+            // Display raw data
+            document.getElementById('raw-data-content').textContent = JSON.stringify(results, null, 2);
+            
+            document.getElementById('results').style.display = 'block';
+        }
+
+        function displayStatistics(stats) {
+            const statsGrid = document.getElementById('stats-grid');
+            statsGrid.innerHTML = `
+                <div class="stat-card">
+                    <div class="stat-number">${stats.totalPages}</div>
+                    <div class="stat-label">Total Pages</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number">${stats.pagesWithTitles}</div>
+                    <div class="stat-label">Pages with Titles</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number">${stats.pagesWithMetaDesc}</div>
+                    <div class="stat-label">Pages with Meta Description</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number">${stats.indexablePages}</div>
+                    <div class="stat-label">Indexable Pages</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number">${stats.avgWordCount}</div>
+                    <div class="stat-label">Avg Word Count</div>
+                </div>
+            `;
+        }
+
+        function displayPageAnalyses(pageAnalyses) {
+            const container = document.getElementById('page-analyses');
+            if (!pageAnalyses || pageAnalyses.length === 0) {
+                container.innerHTML = '<p>No page analyses available</p>';
+                return;
+            }
+
+            container.innerHTML = pageAnalyses.map(page => `
+                <div class="page-analysis">
+                    <h3><a href="${page.url}" target="_blank" class="url">${page.url}</a></h3>
+                    <p><strong>SEO Score:</strong> <span class="score">${page.seoScore}/100</span></p>
+                    
+                    ${page.issues && page.issues.length > 0 ? `
+                        <div class="issues">
+                            <strong>Issues Found:</strong>
+                            <ul>
+                                ${page.issues.map(issue => `<li>${issue.replace(/^-\s*/, '')}</li>`).join('')}
+                            </ul>
+                        </div>
+                    ` : ''}
+                    
+                    ${page.suggestions && page.suggestions.length > 0 ? `
+                        <div class="suggestions">
+                            <strong>Suggestions:</strong>
+                            <ul>
+                                ${page.suggestions.map(suggestion => `<li>${suggestion.replace(/^-\s*/, '')}</li>`).join('')}
+                            </ul>
+                        </div>
+                    ` : ''}
+                </div>
+            `).join('');
+        }
+
+        function displaySiteAnalysis(siteAnalysis) {
+            const container = document.getElementById('site-analysis-content');
+            container.innerHTML = `<div class="container"><pre>${siteAnalysis.fullText}</pre></div>`;
+        }
+
+        function showTab(tabName) {
+            // Hide all tab contents
+            document.querySelectorAll('.tab-content').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            
+            // Remove active class from all tabs
+            document.querySelectorAll('.tab').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            
+            // Show selected tab
+            document.getElementById(tabName).classList.add('active');
+            
+            // Add active class to clicked tab
+            event.target.classList.add('active');
+        }
+    </script>
+</body>
+</html>
