@@ -70,42 +70,65 @@ class AuditController {
   }
 
   _prepareComprehensiveResults(analysis, csvData, slug) {
-    return {
-      slug: slug,
-      timestamp: new Date().toISOString(),
-      summary: analysis.summary,
-      
-      // Overall site statistics
-      overview: {
-        totalPages: csvData.length,
-        averageScore: analysis.summary.averageScore,
-        analysisDate: analysis.summary.analyzedAt
-      },
-      
-      // Individual page analyses (parsed from chunk results)
-      pageAnalyses: this._parsePageAnalyses(analysis.chunkResults),
-      
-      // Site-wide analysis
-      siteAnalysis: {
-        fullText: analysis.finalAnalysis,
-        structured: this._structureSiteAnalysis(analysis.finalAnalysis)
-      },
-      
-      // Raw crawl data (first 10 pages for preview)
-      crawlDataPreview: csvData.slice(0, 10).map(row => ({
-        url: row.Address || row.URL,
-        title: row.Title,
-        statusCode: row['Status Code'],
-        metaDescription: row['Meta Description 1'],
-        h1: row['H1-1'],
-        wordCount: row['Word Count'],
-        indexability: row.Indexability
-      })),
-      
-      // Statistics
-      statistics: this._generateStatistics(csvData)
-    };
-  }
+  return {
+    slug: slug,
+    timestamp: new Date().toISOString(),
+    summary: analysis.summary,
+    
+    // Overall site statistics
+    overview: {
+      totalPages: csvData.length,
+      averageScore: analysis.summary.averageScore,
+      analysisDate: analysis.summary.analyzedAt
+    },
+    
+    // Individual page analyses (parsed from chunk results)
+    pageAnalyses: this._parsePageAnalyses(analysis.chunkResults),
+    
+    // Site-wide analysis with cleaned text
+    siteAnalysis: {
+      fullText: this._cleanAnalysisText(analysis.finalAnalysis),
+      structured: this._structureSiteAnalysis(analysis.finalAnalysis)
+    },
+    
+    // Raw crawl data (first 10 pages for preview)
+    crawlDataPreview: csvData.slice(0, 10).map(row => ({
+      url: row.Address || row.URL,
+      title: row.Title,
+      statusCode: row['Status Code'],
+      metaDescription: row['Meta Description 1'],
+      h1: row['H1-1'],
+      wordCount: row['Word Count'],
+      indexability: row.Indexability
+    })),
+    
+    // Statistics
+    statistics: this._generateStatistics(csvData)
+  };
+}
+
+// Add this new method to clean the text
+_cleanAnalysisText(text) {
+  if (!text) return '';
+  
+  return text
+    // Remove any special characters at the beginning of lines
+    .replace(/^[^\w\s#\-\*\d]+/gm, '')
+    // Remove any non-printable characters
+    .replace(/[^\x20-\x7E\n\r\t]/g, '')
+    // Clean up multiple spaces
+    .replace(/[ ]{2,}/g, ' ')
+    // Clean up multiple newlines
+    .replace(/\n{3,}/g, '\n\n')
+    // Remove any leading/trailing whitespace from each line
+    .split('\n')
+    .map(line => line.trim())
+    .join('\n')
+    // Remove any remaining special characters that might interfere
+    .replace(/[^\w\s\-\.\,\:\;\(\)\[\]\#\*\n\r]/g, '')
+    // Final cleanup
+    .trim();
+}
 
   _parsePageAnalyses(chunkResults) {
     const pageAnalyses = [];
