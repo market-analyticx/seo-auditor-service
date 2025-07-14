@@ -164,35 +164,54 @@ class AuditService {
   }
 
   async _generateFinalAnalysis(chunkResults, slug) {
-    const messages = [
-      { 
-        role: 'system', 
-        content: 'You are an expert SEO analyst. Based on all individual page analyses, provide a comprehensive site-wide SEO assessment.' 
-      },
-      {
-        role: 'user',
-        content: `Below are individual page analyses for website: ${slug}\n\n${chunkResults.join('\n')}\n\n
-        Based on all the page analyses above, provide a comprehensive SEO analysis of the entire website including:
-        
-        1. Overall Site Health Summary
-        2. Average SEO Score across all pages
-        3. Common Issues Across Pages
-        4. Technical SEO Analysis
-        5. Content Quality Analysis
-        6. Internal Linking Structure
-        7. Mobile Optimization
-        8. Site Performance Analysis
-        9. Priority Recommendations (sorted by potential impact)
-        10. Quick Wins (easy fixes that can have immediate impact)
-        11. Long-term Strategy Recommendations
-        
-        Format your analysis in a clear, structured way with headings and bullet points as appropriate.`
-      }
-    ];
-    
-    workflowLogger.info('Generating final analysis', { slug });
-    return await this._callOpenAIWithRetry(messages);
-  }
+  const messages = [
+    { 
+      role: 'system', 
+      content: 'You are an expert SEO analyst. Based on all individual page analyses, provide a comprehensive site-wide SEO assessment. Use only standard ASCII characters in your response.' 
+    },
+    {
+      role: 'user',
+      content: `Below are individual page analyses for website: ${slug}\n\n${chunkResults.join('\n')}\n\n
+      Based on all the page analyses above, provide a comprehensive SEO analysis of the entire website including:
+      
+      1. Overall Site Health Summary
+      2. Average SEO Score across all pages
+      3. Common Issues Across Pages
+      4. Technical SEO Analysis
+      5. Content Quality Analysis
+      6. Internal Linking Structure
+      7. Mobile Optimization
+      8. Site Performance Analysis
+      9. Priority Recommendations (sorted by potential impact)
+      10. Quick Wins (easy fixes that can have immediate impact)
+      11. Long-term Strategy Recommendations
+      
+      Format your analysis in a clear, structured way with headings and bullet points as appropriate. Use only standard characters - no special symbols or formatting characters.`
+    }
+  ];
+  
+  workflowLogger.info('Generating final analysis', { slug });
+  const analysis = await this._callOpenAIWithRetry(messages);
+  
+  // Clean the analysis text
+  return this._cleanAnalysisText(analysis);
+}
+
+// Add the cleaning method to auditService.js as well
+_cleanAnalysisText(text) {
+  if (!text) return '';
+  
+  return text
+    .replace(/^[^\w\s#\-\*\d]+/gm, '')
+    .replace(/[^\x20-\x7E\n\r\t]/g, '')
+    .replace(/[ ]{2,}/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .split('\n')
+    .map(line => line.trim())
+    .join('\n')
+    .trim();
+}
+
 
   async _callOpenAIWithRetry(messages, retries = config.retries.maxAttempts) {
     for (let attempt = 1; attempt <= retries; attempt++) {
