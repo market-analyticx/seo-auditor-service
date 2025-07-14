@@ -53,7 +53,7 @@ class AuditService {
         slug 
       });
       
-      // Analyze each chunk
+      // Analyze each chunk with parallel processing
       const chunkResults = await this._analyzeChunks(chunks, promptTemplate, slug);
       
       // Generate final analysis
@@ -77,37 +77,65 @@ class AuditService {
   }
 
   async _analyzeChunks(chunks, promptTemplate, slug) {
+    const concurrencyLimit = 3; // Process 3 chunks simultaneously
     const results = [];
     
-    for (let i = 0; i < chunks.length; i++) {
-      logger.info(`Processing chunk ${i + 1}/${chunks.length}...`);
-      workflowLogger.info('Processing chunk', {
-        chunkNumber: i + 1,
-        totalChunks: chunks.length,
-        slug
+    workflowLogger.info('Starting parallel chunk processing', {
+      totalChunks: chunks.length,
+      concurrencyLimit: concurrencyLimit,
+      slug
+    });
+    
+    // Process chunks in batches of 3
+    for (let i = 0; i < chunks.length; i += concurrencyLimit) {
+      const batch = chunks.slice(i, i + concurrencyLimit);
+      const batchNumber = Math.floor(i / concurrencyLimit) + 1;
+      const totalBatches = Math.ceil(chunks.length / concurrencyLimit);
+      
+      workflowLogger.info(`Processing batch ${batchNumber}/${totalBatches}`, {
+        slug,
+        batchSize: batch.length
+      });
+      
+      const batchPromises = batch.map((chunk, batchIndex) => {
+        const chunkNumber = i + batchIndex + 1;
+        return this._analyzeChunk(chunk, promptTemplate, slug, chunkNumber, chunks.length);
       });
       
       try {
-        const analysis = await this._analyzeChunk(chunks[i], promptTemplate, slug, i + 1, chunks.length);
-        results.push(analysis);
+        const batchResults = await Promise.all(batchPromises);
+        results.push(...batchResults);
         
-        // Delay between API calls
-        if (i < chunks.length - 1) {
-          workflowLogger.debug('Delaying before next chunk', { 
-            delay: config.retries.delayMs 
+        workflowLogger.info(`Completed batch ${batchNumber}/${totalBatches}`, {
+          slug,
+          processed: Math.min(i + concurrencyLimit, chunks.length),
+          total: chunks.length,
+          remaining: Math.max(0, chunks.length - (i + concurrencyLimit))
+        });
+        
+        // Reduced delay between batches (only if there are more batches)
+        if (i + concurrencyLimit < chunks.length) {
+          workflowLogger.debug('Waiting before next batch', { 
+            delay: 1000 // Reduced from 3000ms to 1000ms
           });
-          await this._delay(config.retries.delayMs);
+          await this._delay(1000);
         }
       } catch (error) {
-        logger.error(`Failed to analyze chunk ${i + 1}: ${error.message}`);
-        workflowLogger.error('Chunk analysis failed', {
-          chunkNumber: i + 1,
+        logger.error(`Batch ${batchNumber} analysis failed: ${error.message}`);
+        workflowLogger.error('Batch analysis failed', {
+          batchNumber,
           slug,
           error: error.message
         });
         throw error;
       }
     }
+    
+    workflowLogger.info('All chunks processed successfully', {
+      slug,
+      totalChunks: chunks.length,
+      totalResults: results.length
+    });
     
     return results;
   }
@@ -195,7 +223,7 @@ class AuditService {
           throw error;
         }
         
-        const delay = config.retries.delayMs * Math.pow(2, attempt - 1);
+        const delay = Math.min(config.retries.delayMs * Math.pow(1.5, attempt - 1), 10000); // Cap at 10 seconds
         workflowLogger.debug('Waiting before retry', { delay });
         await this._delay(delay);
       }

@@ -1,4 +1,3 @@
-// src/controllers/auditController.js
 const logger = require('../utils/logger');
 const workflowLogger = require('../utils/workflowLogger');
 const auditService = require('../services/auditService');

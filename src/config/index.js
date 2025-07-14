@@ -1,12 +1,11 @@
-// src/config/index.js
 require('dotenv').config();
 const path = require('path');
 const os = require('os');
 
-// Determine if running on Windows
+
 const isWindows = os.platform() === 'win32';
 
-// Default paths based on platform
+
 const defaultScreamingFrogPath = isWindows 
   ? 'C:\\Program Files\\Screaming Frog SEO Spider\\ScreamingFrogSEOSpiderCli.exe' 
   : './sf-crawler.sh';
