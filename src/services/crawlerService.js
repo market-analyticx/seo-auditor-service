@@ -1,4 +1,4 @@
-// src/services/crawlerService.js - Enhanced with detailed error logging
+// src/services/crawlerService.js - Fixed version with startTime bug resolved
 const { exec } = require('child_process');
 const { promisify } = require('util');
 const logger = require('../utils/logger');
@@ -13,6 +13,8 @@ class CrawlerService {
     const command = this._buildCommand(url, outputDir);
 
     for (let attempt = 1; attempt <= retries; attempt++) {
+      const startTime = Date.now(); // Move startTime declaration here, inside the loop
+      
       try {
         logger.info(`Executing crawl (attempt ${attempt}/${retries}): ${url}`);
         workflowLogger.info('Starting crawl attempt', {
@@ -23,8 +25,6 @@ class CrawlerService {
           outputDir,
           timestamp: new Date().toISOString()
         });
-        
-        const startTime = Date.now();
         
         const { stdout, stderr } = await execAsync(command, {
           maxBuffer: 10 * 1024 * 1024, // 10MB buffer
@@ -81,7 +81,7 @@ class CrawlerService {
         return { stdout, stderr };
         
       } catch (error) {
-        const duration = Date.now() - startTime || 0;
+        const duration = Date.now() - startTime; // Now startTime is properly defined
         
         // Enhanced error logging with detailed information
         const errorDetails = {
