@@ -322,27 +322,53 @@ Based on current performance and optimization potential:
     return 'Moderate (100-150% ROI)';
   }
 
-  // Existing methods
+  // Updated method - only include final analysis, not chunk results
   _generateReportContent(slug, analysis) {
     let content = `# COMPREHENSIVE SEO ANALYSIS FOR ${slug.toUpperCase()}\n`;
     content += `Generated on: ${new Date().toLocaleString()}\n`;
     content += `Model used: ${auditConfig.models.openai.model}\n\n`;
     
-    content += `## PAGE-BY-PAGE ANALYSIS\n\n`;
-    analysis.chunkResults.forEach((result, index) => {
-      content += result + '\n';
-    });
-    
+    // Only include the final comprehensive analysis, not the raw chunk results
     content += `## COMPREHENSIVE SITE ANALYSIS\n\n`;
-    content += analysis.finalAnalysis;
+    content += this._cleanReportText(analysis.finalAnalysis);
     
-    workflowLogger.debug('Report content generated', {
+    // Add summary if available
+    if (analysis.summary) {
+      content += `\n\n## ANALYSIS SUMMARY\n\n`;
+      content += `Average SEO Score: ${analysis.summary.averageScore || 'Not calculated'}\n`;
+      content += `Analysis Date: ${analysis.summary.analyzedAt || new Date().toISOString()}\n`;
+    }
+    
+    workflowLogger.debug('Clean report content generated', {
       slug,
-      sectionCount: 2,
+      sectionCount: 1,
       totalLength: content.length
     });
     
     return content;
+  }
+
+  _cleanReportText(text) {
+    if (!text) return '';
+    
+    return text
+      // Remove special characters and formatting marks
+      .replace(/\*{2,}/g, '')
+      .replace(/\*\*/g, '')
+      .replace(/\*/g, '')
+      // Remove non-ASCII characters except basic punctuation
+      .replace(/[^\x20-\x7E\n\r\t]/g, '')
+      // Clean up multiple spaces and newlines
+      .replace(/[ ]{2,}/g, ' ')
+      .replace(/\n{3,}/g, '\n\n')
+      // Remove empty lines with just dashes or asterisks
+      .replace(/^[-*\s]*$/gm, '')
+      // Clean up each line
+      .split('\n')
+      .map(line => line.trim())
+      .filter(line => line.length > 0)
+      .join('\n')
+      .trim();
   }
 
   async _ensureDirectoryExists(dirPath) {

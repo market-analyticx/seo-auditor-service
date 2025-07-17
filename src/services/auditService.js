@@ -1,4 +1,4 @@
-// src/services/auditService.js - Enhanced with per-page analysis capability
+// src/services/auditService.js - Fixed version with clean output parsing
 const dotenv = require('dotenv');
 const path = require('path');
 
@@ -33,7 +33,7 @@ class AuditService {
     workflowLogger.info('OpenAI client initialized');
   }
 
-  // Existing method for site-wide analysis
+  // Site-wide analysis - cleaned up
   async analyzeCSVData(csvData, slug) {
     try {
       const promptTemplate = await fileService.readFile(config.files.promptPath);
@@ -50,7 +50,7 @@ class AuditService {
       
       return {
         chunkResults,
-        finalAnalysis,
+        finalAnalysis: this._cleanAnalysisText(finalAnalysis),
         summary: this._extractSummary(finalAnalysis)
       };
     } catch (error) {
@@ -64,7 +64,7 @@ class AuditService {
     }
   }
 
-  // NEW: Individual page analysis method
+  // Individual page analysis with better parsing
   async analyzeIndividualPages(pageData, slug) {
     try {
       workflowLogger.info('Starting individual page analysis', {
@@ -72,11 +72,8 @@ class AuditService {
         pageCount: pageData.length
       });
 
-      // Load specialized per-page prompt
       const perPagePrompt = await this._getPerPagePrompt();
-      
-      // Process pages in smaller batches to avoid token limits
-      const batchSize = 5; // Analyze 5 pages at a time
+      const batchSize = 3; // Reduced batch size for better parsing
       const batches = this._createPageBatches(pageData, batchSize);
       
       workflowLogger.info('Created page batches', {
@@ -101,10 +98,9 @@ class AuditService {
           const batchResults = await this._analyzePageBatch(batch, perPagePrompt, slug, batchNumber);
           allPageAnalyses.push(...batchResults);
           
-          // Add delay between batches to respect rate limits
           if (i < batches.length - 1) {
-            workflowLogger.debug('Waiting between batches', { delay: 2000 });
-            await this._delay(2000);
+            workflowLogger.debug('Waiting between batches', { delay: 3000 });
+            await this._delay(3000);
           }
           
         } catch (batchError) {
@@ -113,8 +109,6 @@ class AuditService {
             batchNumber,
             error: batchError.message
           });
-          
-          // Continue with other batches even if one fails
           continue;
         }
       }
@@ -144,28 +138,15 @@ class AuditService {
     try {
       return await fileService.readFile(perPagePromptPath);
     } catch (error) {
-      // If custom prompt doesn't exist, use default
       return this._getDefaultPerPagePrompt();
     }
   }
 
   _getDefaultPerPagePrompt() {
-    return `You are an expert SEO consultant analyzing individual web pages. For each page provided, give a detailed, actionable analysis.
+    return `You are an expert SEO consultant. Analyze each page and provide a structured response.
 
-For each page, provide:
+For each page, provide EXACTLY this format (no extra characters or formatting):
 
-1. **SEO SCORE** (0-100): Based on technical and content factors
-2. **PAGE TITLE ANALYSIS**: Quality, length, keyword optimization
-3. **META DESCRIPTION ANALYSIS**: Presence, quality, length, call-to-action
-4. **CONTENT ANALYSIS**: Word count, structure, keyword usage, readability
-5. **TECHNICAL SEO**: Status code, indexability, canonical tags, load time
-6. **ON-PAGE ELEMENTS**: H1-H6 structure, image alt text, internal linking
-7. **CRITICAL ISSUES**: List specific problems (max 5)
-8. **QUICK WINS**: Easy fixes with high impact (max 3)
-9. **DETAILED RECOMMENDATIONS**: Specific actions to improve ranking (max 5)
-10. **PRIORITY**: High/Medium/Low based on traffic potential and fix difficulty
-
-Format each page analysis as:
 ---
 URL: [page_url]
 SEO SCORE: [score]/100
@@ -177,16 +158,19 @@ ON-PAGE: [analysis]
 CRITICAL ISSUES:
 - [issue 1]
 - [issue 2]
+- [issue 3]
 QUICK WINS:
-- [quick win 1]
-- [quick win 2]
+- [win 1]
+- [win 2]
+- [win 3]
 RECOMMENDATIONS:
 - [recommendation 1]
 - [recommendation 2]
+- [recommendation 3]
 PRIORITY: [High/Medium/Low]
 ---
 
-Be specific, actionable, and focus on improvements that will impact search rankings.`;
+Important: Use only plain text, no special formatting, no asterisks, no bold markers.`;
   }
 
   _createPageBatches(pageData, batchSize) {
@@ -211,14 +195,17 @@ Be specific, actionable, and focus on improvements that will impact search ranki
       inlinks: page['Inlinks'] || '0',
       outlinks: page['Outlinks'] || '0',
       lastModified: page['Last Modified'] || '',
-      // Add more fields as needed
     }));
 
     const messages = [
       { role: 'system', content: prompt },
       {
         role: 'user',
-        content: `Analyze these ${batch.length} pages from website: ${slug}\n\n${JSON.stringify(batchData, null, 2)}`
+        content: `Analyze these ${batch.length} pages from website: ${slug}
+
+${JSON.stringify(batchData, null, 2)}
+
+Please provide the analysis in the exact format specified, with no extra formatting or special characters.`
       }
     ];
 
@@ -230,7 +217,8 @@ Be specific, actionable, and focus on improvements that will impact search ranki
       });
 
       const response = await this._callOpenAIWithRetry(messages);
-      const parsedResults = this._parsePageAnalysisResponse(response, batch);
+      const cleanResponse = this._cleanAnalysisText(response);
+      const parsedResults = this._parsePageAnalysisResponse(cleanResponse, batch);
 
       workflowLogger.info('Batch analysis completed', {
         slug,
@@ -254,13 +242,13 @@ Be specific, actionable, and focus on improvements that will impact search ranki
     const results = [];
     
     try {
-      // Split response by page separators
+      // Split response by page separators and clean
       const pageAnalyses = response.split('---').filter(section => section.trim());
       
       pageAnalyses.forEach((analysis, index) => {
         try {
           const pageData = this._extractPageData(analysis, originalBatch[index]);
-          if (pageData) {
+          if (pageData && pageData.url) {
             results.push(pageData);
           }
         } catch (parseError) {
@@ -289,39 +277,62 @@ Be specific, actionable, and focus on improvements that will impact search ranki
     };
 
     try {
-      // Extract SEO score
+      // Extract URL (use the one from analysis if available)
+      const urlMatch = analysisText.match(/URL:\s*(.+)/i);
+      if (urlMatch) {
+        data.url = urlMatch[1].trim();
+      }
+
+      // Extract SEO score with better parsing
       const scoreMatch = analysisText.match(/SEO SCORE:\s*(\d+)/i);
-      data.seoScore = scoreMatch ? parseInt(scoreMatch[1]) : null;
+      if (scoreMatch) {
+        data.seoScore = parseInt(scoreMatch[1]);
+      } else {
+        // Default score based on basic factors
+        data.seoScore = this._calculateBasicScore(originalPage);
+      }
 
-      // Extract critical issues
+      // Extract issues - clean format
       const issuesMatch = analysisText.match(/CRITICAL ISSUES:(.*?)(?=QUICK WINS:|RECOMMENDATIONS:|PRIORITY:|$)/s);
-      data.issues = issuesMatch ? 
-        issuesMatch[1].split('\n')
-          .map(line => line.replace(/^-\s*/, '').trim())
-          .filter(line => line.length > 0)
-          .slice(0, 5) : [];
+      data.issues = [];
+      if (issuesMatch) {
+        const issuesText = issuesMatch[1];
+        const issues = issuesText.split('\n')
+          .map(line => line.replace(/^-\s*/, '').replace(/^\d+\.\s*/, '').trim())
+          .filter(line => line.length > 0 && !line.match(/^\*+$/))
+          .slice(0, 5);
+        data.issues = issues;
+      }
 
-      // Extract quick wins
+      // Extract quick wins - clean format
       const quickWinsMatch = analysisText.match(/QUICK WINS:(.*?)(?=RECOMMENDATIONS:|PRIORITY:|$)/s);
-      data.quickWins = quickWinsMatch ? 
-        quickWinsMatch[1].split('\n')
-          .map(line => line.replace(/^-\s*/, '').trim())
-          .filter(line => line.length > 0)
-          .slice(0, 3) : [];
+      data.quickWins = [];
+      if (quickWinsMatch) {
+        const quickWinsText = quickWinsMatch[1];
+        const wins = quickWinsText.split('\n')
+          .map(line => line.replace(/^-\s*/, '').replace(/^\d+\.\s*/, '').trim())
+          .filter(line => line.length > 0 && !line.match(/^\*+$/))
+          .slice(0, 3);
+        data.quickWins = wins;
+      }
 
-      // Extract recommendations
+      // Extract recommendations - clean format
       const recommendationsMatch = analysisText.match(/RECOMMENDATIONS:(.*?)(?=PRIORITY:|$)/s);
-      data.recommendations = recommendationsMatch ? 
-        recommendationsMatch[1].split('\n')
-          .map(line => line.replace(/^-\s*/, '').trim())
-          .filter(line => line.length > 0)
-          .slice(0, 5) : [];
+      data.recommendations = [];
+      if (recommendationsMatch) {
+        const recsText = recommendationsMatch[1];
+        const recs = recsText.split('\n')
+          .map(line => line.replace(/^-\s*/, '').replace(/^\d+\.\s*/, '').trim())
+          .filter(line => line.length > 0 && !line.match(/^\*+$/))
+          .slice(0, 5);
+        data.recommendations = recs;
+      }
 
       // Extract priority
       const priorityMatch = analysisText.match(/PRIORITY:\s*(High|Medium|Low)/i);
       data.priority = priorityMatch ? priorityMatch[1] : 'Medium';
 
-      // Estimate impact based on score and priority
+      // Calculate estimated impact
       data.estimatedImpact = this._calculateEstimatedImpact(data.seoScore, data.priority);
 
     } catch (extractError) {
@@ -334,6 +345,28 @@ Be specific, actionable, and focus on improvements that will impact search ranki
     return data;
   }
 
+  _calculateBasicScore(pageData) {
+    let score = 50; // Base score
+
+    // Title check
+    if (pageData.Title && pageData.Title.length > 0) score += 15;
+    
+    // Meta description check
+    if (pageData['Meta Description 1'] && pageData['Meta Description 1'].length > 0) score += 15;
+    
+    // H1 check
+    if (pageData['H1-1'] && pageData['H1-1'].length > 0) score += 10;
+    
+    // Word count check
+    const wordCount = parseInt(pageData['Word Count']) || 0;
+    if (wordCount > 300) score += 10;
+    
+    // Status code check
+    if (pageData['Status Code'] === '200') score += 10;
+
+    return Math.min(100, score);
+  }
+
   _calculateEstimatedImpact(score, priority) {
     if (!score) return 'Unknown';
     
@@ -344,26 +377,43 @@ Be specific, actionable, and focus on improvements that will impact search ranki
     return 'Minimal';
   }
 
-  // Existing methods (keep unchanged)
-  async _analyzeChunks(chunks, promptTemplate, slug) {
-    const concurrencyLimit = 2; // Reduced from 3 to help with rate limits
-    const results = [];
+  // Enhanced text cleaning
+  _cleanAnalysisText(text) {
+    if (!text) return '';
     
-    workflowLogger.info('Starting parallel chunk processing', {
-      totalChunks: chunks.length,
-      concurrencyLimit: concurrencyLimit,
-      slug
-    });
+    return text
+      // Remove multiple asterisks and special characters
+      .replace(/\*{2,}/g, '')
+      .replace(/\*\*/g, '')
+      .replace(/\*/g, '')
+      // Remove non-ASCII characters except basic punctuation
+      .replace(/[^\x20-\x7E\n\r\t]/g, '')
+      // Clean up numbering issues
+      .replace(/^\d+\.\s*\*+\s*/gm, '')
+      .replace(/^-\s*\*+\s*/gm, '- ')
+      // Clean up multiple spaces and newlines
+      .replace(/[ ]{2,}/g, ' ')
+      .replace(/\n{3,}/g, '\n\n')
+      // Remove empty list items
+      .replace(/^-\s*$/gm, '')
+      .replace(/^\d+\.\s*$/gm, '')
+      // Split and clean each line
+      .split('\n')
+      .map(line => line.trim())
+      .filter(line => line.length > 0)
+      .join('\n')
+      .trim();
+  }
+
+  // Rest of the methods remain the same...
+  async _analyzeChunks(chunks, promptTemplate, slug) {
+    const concurrencyLimit = 2;
+    const results = [];
     
     for (let i = 0; i < chunks.length; i += concurrencyLimit) {
       const batch = chunks.slice(i, i + concurrencyLimit);
       const batchNumber = Math.floor(i / concurrencyLimit) + 1;
       const totalBatches = Math.ceil(chunks.length / concurrencyLimit);
-      
-      workflowLogger.info(`Processing chunk batch ${batchNumber}/${totalBatches}`, {
-        slug,
-        batchSize: batch.length
-      });
       
       const batchPromises = batch.map((chunk, batchIndex) => {
         const chunkNumber = i + batchIndex + 1;
@@ -374,35 +424,14 @@ Be specific, actionable, and focus on improvements that will impact search ranki
         const batchResults = await Promise.all(batchPromises);
         results.push(...batchResults);
         
-        workflowLogger.info(`Completed chunk batch ${batchNumber}/${totalBatches}`, {
-          slug,
-          processed: Math.min(i + concurrencyLimit, chunks.length),
-          total: chunks.length,
-          remaining: Math.max(0, chunks.length - (i + concurrencyLimit))
-        });
-        
         if (i + concurrencyLimit < chunks.length) {
-          workflowLogger.debug('Waiting before next batch', { 
-            delay: 3000 // Increased delay to help with rate limits
-          });
           await this._delay(3000);
         }
       } catch (error) {
         logger.error(`Chunk batch ${batchNumber} analysis failed: ${error.message}`);
-        workflowLogger.error('Chunk batch analysis failed', {
-          batchNumber,
-          slug,
-          error: error.message
-        });
         throw error;
       }
     }
-    
-    workflowLogger.info('All chunks processed successfully', {
-      slug,
-      totalChunks: chunks.length,
-      totalResults: results.length
-    });
     
     return results;
   }
@@ -416,75 +445,40 @@ Be specific, actionable, and focus on improvements that will impact search ranki
       }
     ];
     
-    workflowLogger.debug('Calling OpenAI API for chunk', { 
-      chunkNumber, 
-      slug 
-    });
     const response = await this._callOpenAIWithRetry(messages);
-    workflowLogger.info('Chunk analysis completed', { 
-      chunkNumber, 
-      slug,
-      responseLength: response.length 
-    });
-    
-    return response;
+    return this._cleanAnalysisText(response);
   }
 
   async _generateFinalAnalysis(chunkResults, slug) {
     const messages = [
       { 
         role: 'system', 
-        content: 'You are an expert SEO analyst. Based on all individual page analyses, provide a comprehensive site-wide SEO assessment. Use only standard ASCII characters in your response.' 
+        content: 'You are an expert SEO analyst. Provide a comprehensive site-wide SEO assessment. Use only standard ASCII characters, no special formatting.' 
       },
       {
         role: 'user',
-        content: `Below are individual page analyses for website: ${slug}\n\n${chunkResults.join('\n')}\n\n
-        Based on all the page analyses above, provide a comprehensive SEO analysis of the entire website including:
+        content: `Based on the page analyses for website: ${slug}, provide a comprehensive SEO analysis including:
         
         1. Overall Site Health Summary
         2. Average SEO Score across all pages
         3. Common Issues Across Pages
         4. Technical SEO Analysis
         5. Content Quality Analysis
-        6. Internal Linking Structure
-        7. Mobile Optimization
-        8. Site Performance Analysis
-        9. Priority Recommendations (sorted by potential impact)
-        10. Quick Wins (easy fixes that can have immediate impact)
-        11. Long-term Strategy Recommendations
+        6. Priority Recommendations
+        7. Quick Wins
+        8. Long-term Strategy
         
-        Format your analysis in a clear, structured way with headings and bullet points as appropriate. Use only standard characters - no special symbols or formatting characters.`
+        Use clear headings and bullet points. No special characters or formatting.`
       }
     ];
     
-    workflowLogger.info('Generating final analysis', { slug });
     const analysis = await this._callOpenAIWithRetry(messages);
-    
     return this._cleanAnalysisText(analysis);
-  }
-
-  _cleanAnalysisText(text) {
-    if (!text) return '';
-    
-    return text
-      .replace(/^[^\w\s#\-\*\d]+/gm, '')
-      .replace(/[^\x20-\x7E\n\r\t]/g, '')
-      .replace(/[ ]{2,}/g, ' ')
-      .replace(/\n{3,}/g, '\n\n')
-      .split('\n')
-      .map(line => line.trim())
-      .join('\n')
-      .trim();
   }
 
   async _callOpenAIWithRetry(messages, retries = config.retries.maxAttempts) {
     for (let attempt = 1; attempt <= retries; attempt++) {
       try {
-        workflowLogger.debug('OpenAI API call attempt', { 
-          attempt, 
-          maxRetries: retries 
-        });
-        
         const response = await this.openai.chat.completions.create({
           model: config.models.openai.model,
           messages: messages,
@@ -492,22 +486,15 @@ Be specific, actionable, and focus on improvements that will impact search ranki
           max_tokens: config.models.openai.maxTokens,
         });
         
-        workflowLogger.info('OpenAI API call successful', { attempt });
         return response.choices[0]?.message?.content?.trim();
       } catch (error) {
         logger.error(`OpenAI API call attempt ${attempt} failed: ${error.message}`);
-        workflowLogger.error('OpenAI API call failed', {
-          attempt,
-          error: error.message,
-          errorType: error.constructor.name
-        });
         
         if (attempt === retries) {
           throw error;
         }
         
         const delay = Math.min(config.retries.delayMs * Math.pow(1.5, attempt - 1), 10000);
-        workflowLogger.debug('Waiting before retry', { delay });
         await this._delay(delay);
       }
     }
@@ -517,13 +504,10 @@ Be specific, actionable, and focus on improvements that will impact search ranki
     const summaryRegex = /Average Score: (\d+\.?\d*)/;
     const match = analysis.match(summaryRegex);
     
-    const summary = {
+    return {
       averageScore: match ? parseFloat(match[1]) : null,
       analyzedAt: new Date().toISOString()
     };
-    
-    workflowLogger.debug('Extracted summary', summary);
-    return summary;
   }
 
   _delay(ms) {

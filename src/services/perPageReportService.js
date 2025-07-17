@@ -105,58 +105,87 @@ class PerPageReportService {
   }
 
   _createPageReportContent(pageAnalysis, originalData, pageNumber) {
+    // Clean and format all data to remove special characters
+    const cleanUrl = this._cleanText(pageAnalysis.url || 'Unknown');
+    const cleanTitle = this._cleanText(pageAnalysis.title || 'No title');
+    const cleanMetaDesc = this._cleanText(pageAnalysis.metaDescription || 'Missing');
+    const seoScore = pageAnalysis.seoScore || 'Not available';
+    const priority = this._cleanText(pageAnalysis.priority || 'Medium');
+    const impact = this._cleanText(pageAnalysis.estimatedImpact || 'Unknown');
+
     const content = `# SEO Analysis Report - Page ${pageNumber}
 
 ## Page Overview
-- **URL**: ${pageAnalysis.url}
-- **Title**: ${pageAnalysis.title || 'No title'}
-- **SEO Score**: ${pageAnalysis.seoScore || 'N/A'}/100
-- **Priority**: ${pageAnalysis.priority || 'Medium'}
-- **Estimated Impact**: ${pageAnalysis.estimatedImpact || 'Unknown'}
+- URL: ${cleanUrl}
+- Title: ${cleanTitle}
+- SEO Score: ${seoScore}/100
+- Priority: ${priority}
+- Estimated Impact: ${impact}
 
 ## Technical Details
-- **Status Code**: ${originalData['Status Code'] || 'Unknown'}
-- **Indexability**: ${originalData.Indexability || 'Unknown'}
-- **Word Count**: ${originalData['Word Count'] || '0'}
-- **Internal Links**: ${originalData.Inlinks || '0'}
-- **External Links**: ${originalData.Outlinks || '0'}
-- **Last Modified**: ${originalData['Last Modified'] || 'Unknown'}
+- Status Code: ${originalData['Status Code'] || 'Unknown'}
+- Indexability: ${originalData.Indexability || 'Unknown'}
+- Word Count: ${originalData['Word Count'] || '0'}
+- Internal Links: ${originalData.Inlinks || '0'}
+- External Links: ${originalData.Outlinks || '0'}
+- Last Modified: ${originalData['Last Modified'] || 'Unknown'}
 
 ## Meta Information
-- **Meta Description**: ${pageAnalysis.metaDescription || 'Missing'}
-- **Meta Description Length**: ${(pageAnalysis.metaDescription || '').length} characters
-- **H1 Tag**: ${originalData['H1-1'] || 'Missing'}
-- **H2 Tag**: ${originalData['H1-2'] || 'None'}
-- **Canonical URL**: ${originalData['Canonical Link Element 1'] || 'None'}
+- Meta Description: ${cleanMetaDesc}
+- Meta Description Length: ${cleanMetaDesc.length} characters
+- H1 Tag: ${this._cleanText(originalData['H1-1'] || 'Missing')}
+- H2 Tag: ${this._cleanText(originalData['H1-2'] || 'None')}
+- Canonical URL: ${this._cleanText(originalData['Canonical Link Element 1'] || 'None')}
 
 ## Critical Issues Found
-${pageAnalysis.issues && pageAnalysis.issues.length > 0 ? 
-  pageAnalysis.issues.map((issue, index) => `${index + 1}. ${issue}`).join('\n') : 
-  'No critical issues identified.'}
+${this._formatCleanList(pageAnalysis.issues, 'No critical issues identified.')}
 
 ## Quick Wins (Easy Fixes)
-${pageAnalysis.quickWins && pageAnalysis.quickWins.length > 0 ? 
-  pageAnalysis.quickWins.map((win, index) => `${index + 1}. ${win}`).join('\n') : 
-  'No quick wins identified.'}
+${this._formatCleanList(pageAnalysis.quickWins, 'No quick wins identified.')}
 
 ## Detailed Recommendations
-${pageAnalysis.recommendations && pageAnalysis.recommendations.length > 0 ? 
-  pageAnalysis.recommendations.map((rec, index) => `${index + 1}. ${rec}`).join('\n') : 
-  'No specific recommendations available.'}
+${this._formatCleanList(pageAnalysis.recommendations, 'No specific recommendations available.')}
 
 ## SEO Score Breakdown
 ${this._generateScoreBreakdown(pageAnalysis.seoScore)}
 
 ## Action Priority
-**${pageAnalysis.priority || 'Medium'} Priority**
+Priority Level: ${priority}
+
 ${this._getPriorityExplanation(pageAnalysis.priority, pageAnalysis.seoScore)}
 
 ---
-*Report generated on ${new Date().toLocaleString()}*
-*Analysis by SEO Auditor Service v2.0*
+Report generated on ${new Date().toLocaleString()}
+Analysis by SEO Auditor Service v2.0
 `;
 
     return content;
+  }
+
+  _cleanText(text) {
+    if (!text) return '';
+    
+    return String(text)
+      // Remove special characters and formatting
+      .replace(/\*{2,}/g, '')
+      .replace(/\*\*/g, '')
+      .replace(/\*/g, '')
+      .replace(/[^\x20-\x7E]/g, '')
+      // Clean up extra spaces
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+  }
+
+  _formatCleanList(items, defaultText) {
+    if (!items || !Array.isArray(items) || items.length === 0) {
+      return defaultText;
+    }
+
+    return items
+      .map(item => this._cleanText(item))
+      .filter(item => item.length > 0)
+      .map((item, index) => `${index + 1}. ${item}`)
+      .join('\n');
   }
 
   _generateScoreBreakdown(score) {
