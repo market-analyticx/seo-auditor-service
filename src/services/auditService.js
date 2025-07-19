@@ -1,4 +1,4 @@
-// src/services/auditService.js - Fixed version with clean output parsing
+// src/services/auditService.js - Optimized for speed and efficiency
 const dotenv = require('dotenv');
 const path = require('path');
 
@@ -30,22 +30,27 @@ class AuditService {
       apiKey: process.env.OPENAI_API_KEY,
     });
     
-    workflowLogger.info('OpenAI client initialized');
+    workflowLogger.info('OpenAI client initialized for fast processing');
   }
 
-  // Site-wide analysis - cleaned up
+  // Optimized site-wide analysis with intelligent chunking
   async analyzeCSVData(csvData, slug) {
     try {
       const promptTemplate = await fileService.readFile(config.files.promptPath);
-      const chunks = chunkService.chunkRowsByTokenCount(csvData, config.models.chunking.tokenLimit);
       
-      logger.info(`CSV split into ${chunks.length} chunks`);
-      workflowLogger.info('Data chunked for site analysis', { 
+      // Use smart chunking based on data size
+      const chunks = chunkService.smartChunk(csvData, 3000, 50); // Larger token limit, smaller max chunks
+      
+      logger.info(`Smart chunking: ${chunks.length} chunks for ${csvData.length} rows`);
+      workflowLogger.info('Smart chunking completed', { 
         chunkCount: chunks.length,
-        slug 
+        slug,
+        originalRows: csvData.length,
+        averageChunkSize: chunks.length > 0 ? Math.round(csvData.length / chunks.length) : 0
       });
       
-      const chunkResults = await this._analyzeChunks(chunks, promptTemplate, slug);
+      // Analyze chunks with improved concurrency
+      const chunkResults = await this._analyzeChunksOptimized(chunks, promptTemplate, slug);
       const finalAnalysis = await this._generateFinalAnalysis(chunkResults, slug);
       
       return {
@@ -64,43 +69,57 @@ class AuditService {
     }
   }
 
-  // Individual page analysis with better parsing
+  // Optimized individual page analysis with better batching
   async analyzeIndividualPages(pageData, slug) {
     try {
-      workflowLogger.info('Starting individual page analysis', {
+      workflowLogger.info('Starting optimized individual page analysis', {
         slug,
         pageCount: pageData.length
       });
 
       const perPagePrompt = await this._getPerPagePrompt();
-      const batchSize = 3; // Reduced batch size for better parsing
+      
+      // Optimize batch size based on data volume
+      let batchSize = 5; // Increased from 3
+      if (pageData.length > 200) {
+        batchSize = 10; // Larger batches for big sites
+      } else if (pageData.length < 50) {
+        batchSize = 3; // Smaller batches for small sites
+      }
+      
       const batches = this._createPageBatches(pageData, batchSize);
       
-      workflowLogger.info('Created page batches', {
+      workflowLogger.info('Optimized page batching', {
         slug,
         totalPages: pageData.length,
         batchCount: batches.length,
-        batchSize
+        batchSize,
+        estimatedDuration: `${Math.round(batches.length * 8 / 60)} minutes`
       });
 
       const allPageAnalyses = [];
       
+      // Process batches with better error handling and progress tracking
       for (let i = 0; i < batches.length; i++) {
         const batch = batches[i];
         const batchNumber = i + 1;
         
-        workflowLogger.info(`Processing page batch ${batchNumber}/${batches.length}`, {
-          slug,
-          batchSize: batch.length
-        });
+        // Progress logging every 5 batches to reduce noise
+        if (batchNumber % 5 === 1 || batchNumber === batches.length) {
+          workflowLogger.info(`Processing page batch ${batchNumber}/${batches.length}`, {
+            slug,
+            progress: `${Math.round((batchNumber / batches.length) * 100)}%`,
+            batchSize: batch.length
+          });
+        }
 
         try {
-          const batchResults = await this._analyzePageBatch(batch, perPagePrompt, slug, batchNumber);
+          const batchResults = await this._analyzePageBatchOptimized(batch, perPagePrompt, slug, batchNumber);
           allPageAnalyses.push(...batchResults);
           
+          // Reduced delay between batches for speed
           if (i < batches.length - 1) {
-            workflowLogger.debug('Waiting between batches', { delay: 3000 });
-            await this._delay(3000);
+            await this._delay(2000); // Reduced from 3000ms to 2000ms
           }
           
         } catch (batchError) {
@@ -109,14 +128,16 @@ class AuditService {
             batchNumber,
             error: batchError.message
           });
+          // Continue with next batch instead of failing completely
           continue;
         }
       }
 
-      workflowLogger.info('Individual page analysis completed', {
+      workflowLogger.info('Optimized page analysis completed', {
         slug,
         totalPagesAnalyzed: allPageAnalyses.length,
-        expectedPages: pageData.length
+        expectedPages: pageData.length,
+        successRate: `${Math.round((allPageAnalyses.length / pageData.length) * 100)}%`
       });
 
       return allPageAnalyses;
@@ -127,6 +148,88 @@ class AuditService {
         slug,
         error: error.message,
         stack: error.stack
+      });
+      throw error;
+    }
+  }
+
+  // Optimized chunk analysis with better concurrency
+  async _analyzeChunksOptimized(chunks, promptTemplate, slug) {
+    const concurrencyLimit = 3; // Increased from 2
+    const results = [];
+    
+    for (let i = 0; i < chunks.length; i += concurrencyLimit) {
+      const batch = chunks.slice(i, i + concurrencyLimit);
+      const batchNumber = Math.floor(i / concurrencyLimit) + 1;
+      const totalBatches = Math.ceil(chunks.length / concurrencyLimit);
+      
+      // Progress logging every 5 batches
+      if (batchNumber % 5 === 1 || batchNumber === totalBatches) {
+        workflowLogger.info(`Processing chunk batch ${batchNumber}/${totalBatches}`, {
+          slug,
+          progress: `${Math.round((batchNumber / totalBatches) * 100)}%`
+        });
+      }
+      
+      const batchPromises = batch.map((chunk, batchIndex) => {
+        const chunkNumber = i + batchIndex + 1;
+        return this._analyzeChunk(chunk, promptTemplate, slug, chunkNumber, chunks.length);
+      });
+      
+      try {
+        const batchResults = await Promise.all(batchPromises);
+        results.push(...batchResults);
+        
+        // Reduced delay between batches
+        if (i + concurrencyLimit < chunks.length) {
+          await this._delay(2000); // Reduced from 3000ms
+        }
+      } catch (error) {
+        logger.error(`Chunk batch ${batchNumber} analysis failed: ${error.message}`);
+        // Continue with next batch
+        continue;
+      }
+    }
+    
+    return results;
+  }
+
+  // Optimized page batch analysis
+  async _analyzePageBatchOptimized(batch, prompt, slug, batchNumber) {
+    const batchData = batch.map(page => ({
+      url: page.Address || page.URL,
+      title: page.Title || 'No title',
+      metaDescription: page['Meta Description 1'] || 'Missing',
+      wordCount: page['Word Count'] || '0',
+      h1: page['H1-1'] || 'Missing',
+      statusCode: page['Status Code'] || '',
+      indexability: page.Indexability || '',
+    }));
+
+    const messages = [
+      { role: 'system', content: prompt },
+      {
+        role: 'user',
+        content: `Analyze these ${batch.length} pages from ${slug}:
+
+${JSON.stringify(batchData, null, 2)}
+
+Provide analysis in the exact format specified.`
+      }
+    ];
+
+    try {
+      const response = await this._callOpenAIWithRetry(messages, 2); // Reduced retries from 3 to 2
+      const cleanResponse = this._cleanAnalysisText(response);
+      const parsedResults = this._parsePageAnalysisResponse(cleanResponse, batch);
+
+      return parsedResults;
+
+    } catch (error) {
+      workflowLogger.error('Optimized batch OpenAI call failed', {
+        slug,
+        batchNumber,
+        error: error.message
       });
       throw error;
     }
@@ -145,32 +248,24 @@ class AuditService {
   _getDefaultPerPagePrompt() {
     return `You are an expert SEO consultant. Analyze each page and provide a structured response.
 
-For each page, provide EXACTLY this format (no extra characters or formatting):
+For each page, provide EXACTLY this format (no extra characters):
 
 ---
 URL: [page_url]
 SEO SCORE: [score]/100
-TITLE: [analysis]
-META DESCRIPTION: [analysis]
-CONTENT: [analysis]
-TECHNICAL: [analysis]
-ON-PAGE: [analysis]
 CRITICAL ISSUES:
 - [issue 1]
 - [issue 2]
-- [issue 3]
 QUICK WINS:
-- [win 1]
+- [win 1] 
 - [win 2]
-- [win 3]
 RECOMMENDATIONS:
 - [recommendation 1]
 - [recommendation 2]
-- [recommendation 3]
 PRIORITY: [High/Medium/Low]
 ---
 
-Important: Use only plain text, no special formatting, no asterisks, no bold markers.`;
+Use only plain text, no special formatting.`;
   }
 
   _createPageBatches(pageData, batchSize) {
@@ -181,68 +276,10 @@ Important: Use only plain text, no special formatting, no asterisks, no bold mar
     return batches;
   }
 
-  async _analyzePageBatch(batch, prompt, slug, batchNumber) {
-    const batchData = batch.map(page => ({
-      url: page.Address || page.URL,
-      title: page.Title || 'No title',
-      metaDescription: page['Meta Description 1'] || 'Missing',
-      wordCount: page['Word Count'] || '0',
-      h1: page['H1-1'] || 'Missing',
-      h2: page['H1-2'] || '',
-      statusCode: page['Status Code'] || '',
-      indexability: page.Indexability || '',
-      canonical: page['Canonical Link Element 1'] || '',
-      inlinks: page['Inlinks'] || '0',
-      outlinks: page['Outlinks'] || '0',
-      lastModified: page['Last Modified'] || '',
-    }));
-
-    const messages = [
-      { role: 'system', content: prompt },
-      {
-        role: 'user',
-        content: `Analyze these ${batch.length} pages from website: ${slug}
-
-${JSON.stringify(batchData, null, 2)}
-
-Please provide the analysis in the exact format specified, with no extra formatting or special characters.`
-      }
-    ];
-
-    try {
-      workflowLogger.debug('Sending batch to OpenAI', {
-        slug,
-        batchNumber,
-        pageCount: batch.length
-      });
-
-      const response = await this._callOpenAIWithRetry(messages);
-      const cleanResponse = this._cleanAnalysisText(response);
-      const parsedResults = this._parsePageAnalysisResponse(cleanResponse, batch);
-
-      workflowLogger.info('Batch analysis completed', {
-        slug,
-        batchNumber,
-        parsedResults: parsedResults.length
-      });
-
-      return parsedResults;
-
-    } catch (error) {
-      workflowLogger.error('Batch OpenAI call failed', {
-        slug,
-        batchNumber,
-        error: error.message
-      });
-      throw error;
-    }
-  }
-
   _parsePageAnalysisResponse(response, originalBatch) {
     const results = [];
     
     try {
-      // Split response by page separators and clean
       const pageAnalyses = response.split('---').filter(section => section.trim());
       
       pageAnalyses.forEach((analysis, index) => {
@@ -277,54 +314,50 @@ Please provide the analysis in the exact format specified, with no extra formatt
     };
 
     try {
-      // Extract URL (use the one from analysis if available)
+      // Extract URL
       const urlMatch = analysisText.match(/URL:\s*(.+)/i);
       if (urlMatch) {
         data.url = urlMatch[1].trim();
       }
 
-      // Extract SEO score with better parsing
+      // Extract SEO score
       const scoreMatch = analysisText.match(/SEO SCORE:\s*(\d+)/i);
       if (scoreMatch) {
         data.seoScore = parseInt(scoreMatch[1]);
       } else {
-        // Default score based on basic factors
         data.seoScore = this._calculateBasicScore(originalPage);
       }
 
-      // Extract issues - clean format
+      // Extract issues
       const issuesMatch = analysisText.match(/CRITICAL ISSUES:(.*?)(?=QUICK WINS:|RECOMMENDATIONS:|PRIORITY:|$)/s);
       data.issues = [];
       if (issuesMatch) {
-        const issuesText = issuesMatch[1];
-        const issues = issuesText.split('\n')
-          .map(line => line.replace(/^-\s*/, '').replace(/^\d+\.\s*/, '').trim())
-          .filter(line => line.length > 0 && !line.match(/^\*+$/))
-          .slice(0, 5);
+        const issues = issuesMatch[1].split('\n')
+          .map(line => line.replace(/^-\s*/, '').trim())
+          .filter(line => line.length > 0)
+          .slice(0, 3); // Limit to 3 for speed
         data.issues = issues;
       }
 
-      // Extract quick wins - clean format
+      // Extract quick wins
       const quickWinsMatch = analysisText.match(/QUICK WINS:(.*?)(?=RECOMMENDATIONS:|PRIORITY:|$)/s);
       data.quickWins = [];
       if (quickWinsMatch) {
-        const quickWinsText = quickWinsMatch[1];
-        const wins = quickWinsText.split('\n')
-          .map(line => line.replace(/^-\s*/, '').replace(/^\d+\.\s*/, '').trim())
-          .filter(line => line.length > 0 && !line.match(/^\*+$/))
+        const wins = quickWinsMatch[1].split('\n')
+          .map(line => line.replace(/^-\s*/, '').trim())
+          .filter(line => line.length > 0)
           .slice(0, 3);
         data.quickWins = wins;
       }
 
-      // Extract recommendations - clean format
+      // Extract recommendations
       const recommendationsMatch = analysisText.match(/RECOMMENDATIONS:(.*?)(?=PRIORITY:|$)/s);
       data.recommendations = [];
       if (recommendationsMatch) {
-        const recsText = recommendationsMatch[1];
-        const recs = recsText.split('\n')
-          .map(line => line.replace(/^-\s*/, '').replace(/^\d+\.\s*/, '').trim())
-          .filter(line => line.length > 0 && !line.match(/^\*+$/))
-          .slice(0, 5);
+        const recs = recommendationsMatch[1].split('\n')
+          .map(line => line.replace(/^-\s*/, '').trim())
+          .filter(line => line.length > 0)
+          .slice(0, 3);
         data.recommendations = recs;
       }
 
@@ -332,7 +365,6 @@ Please provide the analysis in the exact format specified, with no extra formatt
       const priorityMatch = analysisText.match(/PRIORITY:\s*(High|Medium|Low)/i);
       data.priority = priorityMatch ? priorityMatch[1] : 'Medium';
 
-      // Calculate estimated impact
       data.estimatedImpact = this._calculateEstimatedImpact(data.seoScore, data.priority);
 
     } catch (extractError) {
@@ -346,58 +378,35 @@ Please provide the analysis in the exact format specified, with no extra formatt
   }
 
   _calculateBasicScore(pageData) {
-    let score = 50; // Base score
-
-    // Title check
+    let score = 50;
     if (pageData.Title && pageData.Title.length > 0) score += 15;
-    
-    // Meta description check
     if (pageData['Meta Description 1'] && pageData['Meta Description 1'].length > 0) score += 15;
-    
-    // H1 check
     if (pageData['H1-1'] && pageData['H1-1'].length > 0) score += 10;
-    
-    // Word count check
     const wordCount = parseInt(pageData['Word Count']) || 0;
     if (wordCount > 300) score += 10;
-    
-    // Status code check
     if (pageData['Status Code'] === '200') score += 10;
-
     return Math.min(100, score);
   }
 
   _calculateEstimatedImpact(score, priority) {
     if (!score) return 'Unknown';
-    
     if (score < 50 && priority === 'High') return 'Very High';
     if (score < 60 && priority === 'High') return 'High';
     if (score < 70 && priority === 'Medium') return 'Medium';
-    if (score < 80 && priority === 'Low') return 'Low';
-    return 'Minimal';
+    return 'Low';
   }
 
-  // Enhanced text cleaning
   _cleanAnalysisText(text) {
     if (!text) return '';
     
     return text
-      // Remove multiple asterisks and special characters
       .replace(/\*{2,}/g, '')
       .replace(/\*\*/g, '')
       .replace(/\*/g, '')
-      // Remove non-ASCII characters except basic punctuation
       .replace(/[^\x20-\x7E\n\r\t]/g, '')
-      // Clean up numbering issues
-      .replace(/^\d+\.\s*\*+\s*/gm, '')
-      .replace(/^-\s*\*+\s*/gm, '- ')
-      // Clean up multiple spaces and newlines
       .replace(/[ ]{2,}/g, ' ')
       .replace(/\n{3,}/g, '\n\n')
-      // Remove empty list items
-      .replace(/^-\s*$/gm, '')
-      .replace(/^\d+\.\s*$/gm, '')
-      // Split and clean each line
+      .replace(/^-\s*\*+\s*/gm, '- ')
       .split('\n')
       .map(line => line.trim())
       .filter(line => line.length > 0)
@@ -405,47 +414,16 @@ Please provide the analysis in the exact format specified, with no extra formatt
       .trim();
   }
 
-  // Rest of the methods remain the same...
-  async _analyzeChunks(chunks, promptTemplate, slug) {
-    const concurrencyLimit = 2;
-    const results = [];
-    
-    for (let i = 0; i < chunks.length; i += concurrencyLimit) {
-      const batch = chunks.slice(i, i + concurrencyLimit);
-      const batchNumber = Math.floor(i / concurrencyLimit) + 1;
-      const totalBatches = Math.ceil(chunks.length / concurrencyLimit);
-      
-      const batchPromises = batch.map((chunk, batchIndex) => {
-        const chunkNumber = i + batchIndex + 1;
-        return this._analyzeChunk(chunk, promptTemplate, slug, chunkNumber, chunks.length);
-      });
-      
-      try {
-        const batchResults = await Promise.all(batchPromises);
-        results.push(...batchResults);
-        
-        if (i + concurrencyLimit < chunks.length) {
-          await this._delay(3000);
-        }
-      } catch (error) {
-        logger.error(`Chunk batch ${batchNumber} analysis failed: ${error.message}`);
-        throw error;
-      }
-    }
-    
-    return results;
-  }
-
   async _analyzeChunk(chunk, promptTemplate, slug, chunkNumber, totalChunks) {
     const messages = [
       { role: 'system', content: promptTemplate },
       {
         role: 'user',
-        content: `Here is chunk ${chunkNumber} of ${totalChunks} for website: ${slug}\n\n${JSON.stringify(chunk, null, 2)}`
+        content: `Chunk ${chunkNumber}/${totalChunks} for ${slug}:\n\n${JSON.stringify(chunk, null, 2)}`
       }
     ];
     
-    const response = await this._callOpenAIWithRetry(messages);
+    const response = await this._callOpenAIWithRetry(messages, 2);
     return this._cleanAnalysisText(response);
   }
 
@@ -453,37 +431,36 @@ Please provide the analysis in the exact format specified, with no extra formatt
     const messages = [
       { 
         role: 'system', 
-        content: 'You are an expert SEO analyst. Provide a comprehensive site-wide SEO assessment. Use only standard ASCII characters, no special formatting.' 
+        content: 'You are an expert SEO analyst. Provide a comprehensive site-wide SEO assessment. Use only standard ASCII characters.' 
       },
       {
         role: 'user',
-        content: `Based on the page analyses for website: ${slug}, provide a comprehensive SEO analysis including:
+        content: `Based on analyses for ${slug}, provide a comprehensive SEO analysis with:
         
-        1. Overall Site Health Summary
-        2. Average SEO Score across all pages
-        3. Common Issues Across Pages
-        4. Technical SEO Analysis
-        5. Content Quality Analysis
-        6. Priority Recommendations
-        7. Quick Wins
-        8. Long-term Strategy
-        
-        Use clear headings and bullet points. No special characters or formatting.`
+1. Overall Site Health Summary
+2. Average SEO Score
+3. Common Issues
+4. Technical SEO Analysis
+5. Priority Recommendations
+6. Quick Wins
+7. Long-term Strategy
+
+Use clear headings and bullet points. Keep it concise but comprehensive.`
       }
     ];
     
-    const analysis = await this._callOpenAIWithRetry(messages);
+    const analysis = await this._callOpenAIWithRetry(messages, 2);
     return this._cleanAnalysisText(analysis);
   }
 
-  async _callOpenAIWithRetry(messages, retries = config.retries.maxAttempts) {
+  async _callOpenAIWithRetry(messages, retries = 2) {
     for (let attempt = 1; attempt <= retries; attempt++) {
       try {
         const response = await this.openai.chat.completions.create({
           model: config.models.openai.model,
           messages: messages,
           temperature: config.models.openai.temperature,
-          max_tokens: config.models.openai.maxTokens,
+          max_tokens: 2000, // Reduced from 3000 for faster responses
         });
         
         return response.choices[0]?.message?.content?.trim();
@@ -494,7 +471,8 @@ Please provide the analysis in the exact format specified, with no extra formatt
           throw error;
         }
         
-        const delay = Math.min(config.retries.delayMs * Math.pow(1.5, attempt - 1), 10000);
+        // Shorter delay for retries
+        const delay = 1000 * attempt; // 1s, 2s
         await this._delay(delay);
       }
     }
