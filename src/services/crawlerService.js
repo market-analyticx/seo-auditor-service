@@ -1,4 +1,4 @@
-// src/services/crawlerService.js - Versatile and fast for all website sizes
+// src/services/crawlerService.js - Fixed to work with your existing Screaming Frog setup
 const { exec } = require('child_process');
 const { promisify } = require('util');
 const logger = require('../utils/logger');
@@ -10,16 +10,16 @@ const execAsync = promisify(exec);
 
 class CrawlerService {
   async execute(url, outputDir, retries = config.retries.maxAttempts) {
-    // Smart settings based on simple size estimation
+    // Smart settings based on simple URL analysis
     const crawlSettings = this._getSmartCrawlSettings(url);
-    const command = this._buildCommand(url, outputDir, crawlSettings);
+    const command = this._buildCompatibleCommand(url, outputDir, crawlSettings);
 
     for (let attempt = 1; attempt <= retries; attempt++) {
       const startTime = Date.now();
       
       try {
-        logger.info(`Executing smart crawl (attempt ${attempt}/${retries}): ${url}`);
-        workflowLogger.info('Starting smart crawl attempt', {
+        logger.info(`Executing compatible crawl (attempt ${attempt}/${retries}): ${url}`);
+        workflowLogger.info('Starting compatible crawl attempt', {
           url,
           attempt,
           totalAttempts: retries,
@@ -50,7 +50,7 @@ class CrawlerService {
           logger.warn(`Crawl errors: ${errors.slice(0, 3).join('; ')}`);
         }
 
-        workflowLogger.info('Smart crawl completed', {
+        workflowLogger.info('Compatible crawl completed', {
           url,
           attempt,
           duration,
@@ -80,7 +80,7 @@ class CrawlerService {
         });
         
         if (attempt === retries) {
-          throw new Error(`Smart crawl failed after ${retries} attempts: ${error.message}`);
+          throw new Error(`Compatible crawl failed after ${retries} attempts: ${error.message}`);
         }
         
         await this._waitForRetry(attempt);
@@ -94,62 +94,45 @@ class CrawlerService {
     
     // Default settings - good for most sites
     const settings = {
-      maxPages: 1000,           // Reasonable default
-      timeout: 20 * 60 * 1000,  // 20 minutes
-      includeImages: true,      // Important for SEO
-      includeCSS: true,         // Important for SEO
-      includeJS: true,          // Important for SEO
-      includeExternal: false,   // Usually not needed
-      heapSize: '4g',          // Good default
+      timeout: 20 * 60 * 1000,  // 20 minutes default
+      heapSize: '6g',          // Good default
       reasoning: []
     };
 
-    // Adjust for known large platforms (but not enterprise-complex)
+    // Adjust for known large platforms
     const largePlatforms = [
       'shopify.', 'woocommerce.', 'magento.', 'bigcommerce.',
       'wordpress.', 'drupal.', 'joomla.',
       'github.', 'gitlab.', 'bitbucket.',
       'medium.', 'substack.', 'ghost.',
-      'squarespace.', 'wix.', 'webflow.'
+      'squarespace.', 'wix.', 'webflow.',
+      'docs.', 'documentation.', 'help.', 'support.'
     ];
 
-    if (largePlatforms.some(platform => domain.includes(platform))) {
-      settings.maxPages = 2000;
+    if (largePlatforms.some(platform => domain.includes(platform) || url.includes(platform))) {
       settings.timeout = 30 * 60 * 1000; // 30 minutes
-      settings.heapSize = '6g';
+      settings.heapSize = '8g';
       settings.reasoning.push('Large platform detected');
     }
 
-    // E-commerce indicators - need comprehensive crawling
-    const ecommercePatterns = [
-      '/shop', '/store', '/product', '/cart', '/checkout',
-      'shop.', 'store.', 'buy.', 'order.'
+    // Documentation sites often have many pages
+    const docPatterns = [
+      'docs.', 'documentation.', 'help.', 'support.', 'api.',
+      '/docs', '/documentation', '/help', '/support', '/api'
     ];
     
-    if (ecommercePatterns.some(pattern => url.includes(pattern) || domain.includes(pattern))) {
-      settings.includeImages = true; // Critical for ecommerce
-      settings.reasoning.push('E-commerce site detected');
-    }
-
-    // Blog/content sites - usually have many pages
-    const contentPatterns = [
-      'blog.', 'news.', 'articles.', 'post.', 'content.',
-      '/blog', '/news', '/articles', '/posts'
-    ];
-    
-    if (contentPatterns.some(pattern => url.includes(pattern) || domain.includes(pattern))) {
-      settings.maxPages = 1500;
-      settings.reasoning.push('Content-heavy site detected');
+    if (docPatterns.some(pattern => url.includes(pattern) || domain.includes(pattern))) {
+      settings.timeout = 25 * 60 * 1000; // 25 minutes
+      settings.heapSize = '6g';
+      settings.reasoning.push('Documentation site detected');
     }
 
     // Override for testing/development
     if (process.env.CRAWL_MODE === 'fast') {
-      settings.maxPages = 200;
       settings.timeout = 8 * 60 * 1000; // 8 minutes
-      settings.heapSize = '2g';
+      settings.heapSize = '4g';
       settings.reasoning.push('Fast mode enabled');
     } else if (process.env.CRAWL_MODE === 'comprehensive') {
-      settings.maxPages = 3000;
       settings.timeout = 45 * 60 * 1000; // 45 minutes
       settings.heapSize = '8g';
       settings.reasoning.push('Comprehensive mode enabled');
@@ -165,50 +148,15 @@ class CrawlerService {
     return settings;
   }
 
-  // Build command using your existing script structure
-  _buildCommand(url, outputDir, settings) {
+  // Build command using your existing script - FIXED to use simple export format
+  _buildCompatibleCommand(url, outputDir, settings) {
     const scriptPath = config.paths.screamingFrogCli;
     
-    // Use your existing script but pass export tabs to get all SEO-relevant data
-    const exportTabs = this._buildExportTabs(settings);
+    // Use simple "Internal:All" export that works with your SF version
+    // The comma-separated exports were causing the failures
+    const exportTabs = "Internal:All";
     
     return `JAVA_HEAP_SIZE=${settings.heapSize} bash "${scriptPath}" "${url}" "${outputDir}" "${exportTabs}"`;
-  }
-
-  // Build comprehensive export tabs for complete SEO analysis
-  _buildExportTabs(settings) {
-    const tabs = [
-      'Internal:All',           // Main pages data
-      'Page Titles:All',        // SEO titles
-      'Meta Description:All',   // Meta descriptions
-      'H1:All',                // H1 tags
-      'H2:All',                // H2 tags
-      'Canonical:All',         // Canonical URLs
-      'Response Codes:All',    // Status codes
-      'Redirects:All'          // Redirects
-    ];
-
-    // Add image data if needed for SEO
-    if (settings.includeImages) {
-      tabs.push('Images:All');
-    }
-
-    // Add CSS data if needed for SEO
-    if (settings.includeCSS) {
-      tabs.push('Stylesheets:All');
-    }
-
-    // Add JS data if needed for SEO
-    if (settings.includeJS) {
-      tabs.push('Scripts:All');
-    }
-
-    // Add external links if needed
-    if (settings.includeExternal) {
-      tabs.push('External:All');
-    }
-
-    return tabs.join(',');
   }
 
   _extractMeaningfulOutput(stdout) {
@@ -224,6 +172,7 @@ class CrawlerService {
         lowerLine.includes('script completed') ||
         lowerLine.includes('csv contains data') ||
         lowerLine.includes('crawl completed') ||
+        lowerLine.includes('data rows') ||
         (lowerLine.includes('error') && !lowerLine.includes('sf-err'))
       );
     });
@@ -258,7 +207,13 @@ class CrawlerService {
         lowerLine.includes('screaming frog jar found:') ||
         lowerLine.includes('output directory ready:') ||
         lowerLine.includes('url is accessible') ||
-        lowerLine.includes('building crawl command') ||
+        lowerLine.includes('building') ||
+        lowerLine.includes('heap detected') ||
+        lowerLine.includes('crawl settings:') ||
+        lowerLine.includes('using timeout') ||
+        lowerLine.includes('final command:') ||
+        lowerLine.includes('seo data collection') ||
+        lowerLine.includes('crawl started at:') ||
         lowerLine.includes('sf-out:') ||
         lowerLine.includes('output validation') ||
         lowerLine.includes('found') && lowerLine.includes('files') ||
@@ -266,7 +221,8 @@ class CrawlerService {
         lowerLine.includes('csv contains') ||
         lowerLine.includes('final status') ||
         lowerLine.includes('script completed') ||
-        lowerLine.includes('total execution time')
+        lowerLine.includes('total execution time') ||
+        lowerLine.includes('log file:')
       ) {
         return; // Skip these INFO messages
       }
@@ -280,11 +236,11 @@ class CrawlerService {
         lowerLine.includes('out of memory') ||
         lowerLine.includes('connection refused') ||
         lowerLine.includes('timeout exceeded') ||
-        lowerLine.includes('sf-err:') && (
+        (lowerLine.includes('sf-err:') && (
           lowerLine.includes('error') || 
           lowerLine.includes('exception') || 
           lowerLine.includes('failed')
-        )
+        ))
       ) {
         errors.push(line.trim());
       }
@@ -310,17 +266,15 @@ class CrawlerService {
     };
     
     // Performance assessment based on settings
-    const expectedTime = settings.maxPages * 100; // ~100ms per page estimate
-    
     if (duration > settings.timeout * 0.8) {
       analysis.status = 'slow';
       analysis.notes.push('Crawl took most of allocated timeout');
-    } else if (duration > expectedTime * 3) {
+    } else if (duration > 15 * 60 * 1000) { // 15 minutes
       analysis.status = 'slower_than_expected';
-      analysis.notes.push('Crawl slower than expected for page count');
-    } else if (duration < expectedTime * 0.5) {
+      analysis.notes.push('Crawl slower than expected');
+    } else if (duration < 2 * 60 * 1000) { // 2 minutes
       analysis.status = 'very_fast';
-      analysis.notes.push('Crawl completed faster than expected');
+      analysis.notes.push('Crawl completed very quickly');
     } else {
       analysis.notes.push('Good crawl performance');
     }
@@ -334,6 +288,12 @@ class CrawlerService {
         analysis.efficiency.pagesFound = pagesFound;
         analysis.efficiency.pagesPerSecond = (pagesFound / (duration / 1000)).toFixed(2);
       }
+      
+      // Look for data rows mention
+      const dataRowsMatch = stdout.match(/(\d+)\s+data\s+rows/i);
+      if (dataRowsMatch) {
+        analysis.efficiency.dataRows = parseInt(dataRowsMatch[1]);
+      }
     }
     
     return analysis;
@@ -341,11 +301,13 @@ class CrawlerService {
 
   _getQuickRecommendation(error, settings) {
     if (error.signal === 'SIGTERM' || error.message.includes('timeout')) {
-      return `Increase timeout beyond ${Math.floor(settings.timeout / 60000)} minutes or reduce max pages`;
+      return `Increase timeout beyond ${Math.floor(settings.timeout / 60000)} minutes`;
     } else if (error.message.includes('memory')) {
-      return `Increase heap size beyond ${settings.heapSize} or reduce max pages`;
+      return `Increase heap size beyond ${settings.heapSize}`;
     } else if (error.code === 'ENOENT') {
       return 'Check Screaming Frog installation and script path';
+    } else if (error.message.includes('exit code 1')) {
+      return 'Check Screaming Frog compatibility and export tab format';
     } else {
       return 'Check website accessibility and crawler permissions';
     }
