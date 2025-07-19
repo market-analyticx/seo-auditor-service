@@ -1,10 +1,10 @@
-// src/controllers/auditController.js - Enhanced with per-page analysis
+// src/controllers/auditController.js - Updated to work with organized folder structure
 const logger = require('../utils/logger');
 const workflowLogger = require('../utils/workflowLogger');
 const auditService = require('../services/auditService');
 const fileService = require('../services/fileService');
 const reportService = require('../services/reportService');
-const perPageReportService = require('../services/perPageReportService'); // New service
+const perPageReportService = require('../services/perPageReportService');
 const path = require('path');
 const config = require('../config');
 const auditConfig = require('../config/audit');
@@ -34,6 +34,19 @@ class AuditController {
         slug
       });
 
+      // Create organized directory structure at the start
+      const directories = await reportService.createReportDirectory(slug);
+      workflowLogger.info('Created organized report directory structure', {
+        slug,
+        directories,
+        structure: {
+          base: directories.baseDir,
+          slug: directories.slugDir,
+          session: directories.sessionDir,
+          timestamp: directories.timestamp
+        }
+      });
+
       // Perform chunked analysis for site overview
       workflowLogger.info('Starting chunked analysis for site overview', { slug });
       const siteAnalysis = await auditService.analyzeCSVData(pageData, slug);
@@ -45,46 +58,86 @@ class AuditController {
       });
       const perPageAnalysis = await auditService.analyzeIndividualPages(pageData, slug);
 
-      // Generate comprehensive reports
-      workflowLogger.info('Generating comprehensive reports', { slug });
+      // Generate comprehensive reports in organized structure
+      workflowLogger.info('Generating comprehensive reports in organized structure', { 
+        slug,
+        sessionDir: directories.sessionDir
+      });
       
-      // 1. Site overview report (existing)
-      const siteReportPath = await reportService.saveComprehensiveReport(slug, siteAnalysis);
+      // 1. Site overview report (comprehensive_analysis.txt)
+      const siteReport = await reportService.saveComprehensiveReport(slug, siteAnalysis);
       
-      // 2. Per-page analysis reports (new)
-      const perPageReports = await perPageReportService.generatePerPageReports(slug, perPageAnalysis, pageData);
-      
-      // 3. Executive summary report (new)
+      // 2. Executive summary report (executive_summary.md)
       const executiveSummary = await reportService.generateExecutiveSummary(slug, siteAnalysis, perPageAnalysis, pageData);
+      
+      // 3. Per-page analysis reports (per_page_analysis/ subdirectory)
+      const perPageReports = await perPageReportService.generatePerPageReports(slug, perPageAnalysis, pageData);
 
-      // Prepare enhanced results for API response
+      // Optional: Clean up old sessions (keep only last 5)
+      try {
+        await reportService.cleanupOldSessions(slug, 5);
+      } catch (cleanupError) {
+        workflowLogger.warn('Failed to cleanup old sessions', {
+          slug,
+          error: cleanupError.message
+        });
+      }
+
+      // Prepare enhanced results for API response with organized structure info
       const comprehensiveResults = this._prepareEnhancedResults(
         siteAnalysis, 
         perPageAnalysis, 
         pageData, 
         slug,
         {
-          siteReportPath,
-          perPageReports,
-          executiveSummary
+          directories,
+          siteReport,
+          executiveSummary,
+          perPageReports
         }
       );
       
       const duration = Date.now() - startTime;
       logger.info(`Comprehensive SEO analysis completed in ${duration}ms`);
-      workflowLogger.info('Comprehensive SEO analysis completed', { 
+      workflowLogger.info('Comprehensive SEO analysis completed with organized structure', { 
         slug, 
         duration, 
-        siteReportPath,
-        perPageReportCount: perPageReports.length,
+        structure: {
+          sessionDir: directories.sessionDir,
+          timestamp: directories.timestamp,
+          reports: {
+            comprehensive: siteReport.filePath,
+            executive: executiveSummary.filePath,
+            perPageDirectory: perPageReports.perPageDirectory,
+            individualReports: perPageReports.totalReports
+          }
+        },
         summary: siteAnalysis.summary 
       });
       
       return {
         success: true,
-        reportPath: siteReportPath,
-        perPageReports: perPageReports,
+        
+        // Main report information
+        reportPath: siteReport.filePath,
         executiveSummary: executiveSummary,
+        perPageReports: perPageReports,
+        
+        // Organized structure information
+        directories: directories,
+        organizationInfo: {
+          structure: 'reports/slug/timestamp/',
+          timestamp: directories.timestamp,
+          sessionDirectory: directories.sessionDir,
+          filesGenerated: {
+            comprehensive: 'comprehensive_analysis.txt',
+            executive: 'executive_summary.md',
+            perPageDirectory: 'per_page_analysis/',
+            individualPages: perPageReports.totalReports
+          }
+        },
+        
+        // Performance and summary data
         duration,
         slug,
         summary: siteAnalysis.summary,
@@ -99,6 +152,64 @@ class AuditController {
         error: error.message,
         duration,
         stack: error.stack 
+      });
+      throw error;
+    }
+  }
+
+  // New method to get all reports for a specific analysis session
+  async getAnalysisSession(slug, timestamp) {
+    try {
+      workflowLogger.info('Retrieving analysis session', { slug, timestamp });
+      
+      // Get session reports
+      const sessionReports = await perPageReportService.getSessionReports(slug, timestamp);
+      
+      // Get session info from reportService
+      const sessions = await reportService.listAnalysisSessions(slug);
+      const sessionInfo = sessions.find(s => s.timestamp === timestamp);
+      
+      return {
+        slug,
+        timestamp,
+        sessionInfo,
+        reports: sessionReports,
+        available: !!sessionInfo
+      };
+      
+    } catch (error) {
+      workflowLogger.error('Failed to retrieve analysis session', {
+        slug,
+        timestamp,
+        error: error.message
+      });
+      throw error;
+    }
+  }
+
+  // New method to list all analysis sessions for a slug
+  async listAnalysisSessions(slug) {
+    try {
+      workflowLogger.info('Listing analysis sessions', { slug });
+      
+      const sessions = await reportService.listAnalysisSessions(slug);
+      
+      return {
+        slug,
+        sessionCount: sessions.length,
+        sessions: sessions.map(session => ({
+          timestamp: session.timestamp,
+          created: session.created,
+          modified: session.modified,
+          fileCount: session.fileCount,
+          path: session.path
+        }))
+      };
+      
+    } catch (error) {
+      workflowLogger.error('Failed to list analysis sessions', {
+        slug,
+        error: error.message
       });
       throw error;
     }
@@ -179,11 +290,31 @@ class AuditController {
       // Performance metrics
       performanceMetrics: this._generatePerformanceMetrics(pageData),
       
-      // File paths for detailed reports
-      reportFiles: {
-        siteOverview: reports.siteReportPath,
-        perPageReports: reports.perPageReports,
-        executiveSummary: reports.executiveSummary.filePath
+      // Organized file structure information
+      reportStructure: {
+        organizationType: 'hierarchical',
+        baseStructure: 'reports/slug/timestamp/',
+        sessionDirectory: reports.directories.sessionDir,
+        timestamp: reports.directories.timestamp,
+        files: {
+          comprehensive: {
+            path: reports.siteReport.filePath,
+            filename: reports.siteReport.filename,
+            type: 'comprehensive_analysis'
+          },
+          executive: {
+            path: reports.executiveSummary.filePath,
+            filename: reports.executiveSummary.filename,
+            type: 'executive_summary'
+          },
+          perPageAnalysis: {
+            directory: reports.perPageReports.perPageDirectory,
+            summaryReport: reports.perPageReports.summaryReport,
+            actionReport: reports.perPageReports.actionReport,
+            individualReports: reports.perPageReports.individualReports.length,
+            type: 'per_page_analysis'
+          }
+        }
       },
       
       // Statistics for dashboard

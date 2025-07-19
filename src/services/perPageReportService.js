@@ -1,13 +1,13 @@
-// src/services/perPageReportService.js - Generate detailed per-page reports
+// src/services/perPageReportService.js - Updated to work with organized folder structure
 const fs = require('fs').promises;
 const path = require('path');
 const logger = require('../utils/logger');
 const workflowLogger = require('../utils/workflowLogger');
-const config = require('../config');
+const reportService = require('./reportService');
 
 class PerPageReportService {
   constructor() {
-    this.reportsDir = config.paths.reportsDir || path.join(__dirname, '../../reports');
+    // We'll use the reportService to get the organized directory structure
   }
 
   async generatePerPageReports(slug, perPageAnalysis, pageData) {
@@ -17,12 +17,19 @@ class PerPageReportService {
         pageCount: perPageAnalysis.length
       });
 
-      await this._ensureDirectoryExists(this.reportsDir);
+      // Get the latest session directory from reportService
+      const directories = await reportService.getLatestSessionDirectory(slug);
       
-      // Create a subdirectory for this analysis
-      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-      const analysisDir = path.join(this.reportsDir, `${slug}_per_page_${timestamp}`);
-      await this._ensureDirectoryExists(analysisDir);
+      // Create per-page analysis subdirectory within the session
+      const perPageDir = path.join(directories.sessionDir, 'per_page_analysis');
+      await this._ensureDirectoryExists(perPageDir);
+
+      workflowLogger.info('Using organized directory structure for per-page reports', {
+        slug,
+        sessionDir: directories.sessionDir,
+        perPageDir,
+        timestamp: directories.timestamp
+      });
 
       const reports = [];
 
@@ -35,7 +42,7 @@ class PerPageReportService {
           const reportPath = await this._generateIndividualPageReport(
             pageAnalysis, 
             originalData, 
-            analysisDir, 
+            perPageDir, 
             i + 1
           );
           
@@ -54,17 +61,17 @@ class PerPageReportService {
         }
       }
 
-      // Generate summary report
+      // Generate summary report in per-page directory
       const summaryReportPath = await this._generateSummaryReport(
         perPageAnalysis, 
-        analysisDir, 
+        perPageDir, 
         slug
       );
 
-      // Generate priority action report
+      // Generate priority action report in per-page directory
       const actionReportPath = await this._generateActionReport(
         perPageAnalysis,
-        analysisDir,
+        perPageDir,
         slug
       );
 
@@ -72,15 +79,25 @@ class PerPageReportService {
         slug,
         individualReports: reports.length,
         summaryReport: summaryReportPath,
-        actionReport: actionReportPath
+        actionReport: actionReportPath,
+        directories: {
+          session: directories.sessionDir,
+          perPage: perPageDir
+        }
       });
 
       return {
-        analysisDirectory: analysisDir,
+        directories: directories, // Include full directory structure
+        perPageDirectory: perPageDir,
         individualReports: reports,
         summaryReport: summaryReportPath,
         actionReport: actionReportPath,
-        totalReports: reports.length
+        totalReports: reports.length,
+        organizationInfo: {
+          structure: 'reports/slug/timestamp/per_page_analysis/',
+          timestamp: directories.timestamp,
+          slug: slug
+        }
       };
 
     } catch (error) {
@@ -92,10 +109,10 @@ class PerPageReportService {
     }
   }
 
-  async _generateIndividualPageReport(pageAnalysis, originalData, analysisDir, pageNumber) {
+  async _generateIndividualPageReport(pageAnalysis, originalData, perPageDir, pageNumber) {
     const urlSlug = this._createUrlSlug(pageAnalysis.url);
     const filename = `page_${pageNumber.toString().padStart(3, '0')}_${urlSlug}.md`;
-    const filePath = path.join(analysisDir, filename);
+    const filePath = path.join(perPageDir, filename);
 
     const reportContent = this._createPageReportContent(pageAnalysis, originalData, pageNumber);
     
@@ -116,26 +133,26 @@ class PerPageReportService {
     const content = `# SEO Analysis Report - Page ${pageNumber}
 
 ## Page Overview
-- URL: ${cleanUrl}
-- Title: ${cleanTitle}
-- SEO Score: ${seoScore}/100
-- Priority: ${priority}
-- Estimated Impact: ${impact}
+- **URL**: ${cleanUrl}
+- **Title**: ${cleanTitle}
+- **SEO Score**: ${seoScore}/100
+- **Priority**: ${priority}
+- **Estimated Impact**: ${impact}
 
 ## Technical Details
-- Status Code: ${originalData['Status Code'] || 'Unknown'}
-- Indexability: ${originalData.Indexability || 'Unknown'}
-- Word Count: ${originalData['Word Count'] || '0'}
-- Internal Links: ${originalData.Inlinks || '0'}
-- External Links: ${originalData.Outlinks || '0'}
-- Last Modified: ${originalData['Last Modified'] || 'Unknown'}
+- **Status Code**: ${originalData['Status Code'] || 'Unknown'}
+- **Indexability**: ${originalData.Indexability || 'Unknown'}
+- **Word Count**: ${originalData['Word Count'] || '0'}
+- **Internal Links**: ${originalData.Inlinks || '0'}
+- **External Links**: ${originalData.Outlinks || '0'}
+- **Last Modified**: ${originalData['Last Modified'] || 'Unknown'}
 
 ## Meta Information
-- Meta Description: ${cleanMetaDesc}
-- Meta Description Length: ${cleanMetaDesc.length} characters
-- H1 Tag: ${this._cleanText(originalData['H1-1'] || 'Missing')}
-- H2 Tag: ${this._cleanText(originalData['H1-2'] || 'None')}
-- Canonical URL: ${this._cleanText(originalData['Canonical Link Element 1'] || 'None')}
+- **Meta Description**: ${cleanMetaDesc}
+- **Meta Description Length**: ${cleanMetaDesc.length} characters
+- **H1 Tag**: ${this._cleanText(originalData['H1-1'] || 'Missing')}
+- **H2 Tag**: ${this._cleanText(originalData['H1-2'] || 'None')}
+- **Canonical URL**: ${this._cleanText(originalData['Canonical Link Element 1'] || 'None')}
 
 ## Critical Issues Found
 ${this._formatCleanList(pageAnalysis.issues, 'No critical issues identified.')}
@@ -150,13 +167,14 @@ ${this._formatCleanList(pageAnalysis.recommendations, 'No specific recommendatio
 ${this._generateScoreBreakdown(pageAnalysis.seoScore)}
 
 ## Action Priority
-Priority Level: ${priority}
+**Priority Level**: ${priority}
 
 ${this._getPriorityExplanation(pageAnalysis.priority, pageAnalysis.seoScore)}
 
 ---
-Report generated on ${new Date().toLocaleString()}
-Analysis by SEO Auditor Service v2.0
+*Report generated on ${new Date().toLocaleString()}*  
+*Analysis by SEO Auditor Service v2.0*  
+*Part of organized analysis session*
 `;
 
     return content;
@@ -217,9 +235,9 @@ Analysis by SEO Auditor Service v2.0
     return explanations[priority] || explanations['Medium'];
   }
 
-  async _generateSummaryReport(perPageAnalysis, analysisDir, slug) {
+  async _generateSummaryReport(perPageAnalysis, perPageDir, slug) {
     const filename = 'per_page_analysis_summary.md';
-    const filePath = path.join(analysisDir, filename);
+    const filePath = path.join(perPageDir, filename);
 
     const scores = perPageAnalysis.map(p => p.seoScore).filter(s => s);
     const averageScore = scores.length > 0 ? scores.reduce((a, b) => a + b, 0) / scores.length : 0;
@@ -275,7 +293,8 @@ ${this._getMostCommonIssues(perPageAnalysis)}
 ${this._generateActionPlan(highPriority, mediumPriority, lowPriority)}
 
 ---
-*For detailed analysis of each page, see individual page reports in this directory.*
+*For detailed analysis of each page, see individual page reports in this directory.*  
+*This summary is part of the organized analysis session structure.*
 `;
 
     await fs.writeFile(filePath, content, 'utf8');
@@ -319,9 +338,9 @@ ${lowPriority.length > 3 ? `- ... and ${lowPriority.length - 3} more pages` : ''
 `;
   }
 
-  async _generateActionReport(perPageAnalysis, analysisDir, slug) {
+  async _generateActionReport(perPageAnalysis, perPageDir, slug) {
     const filename = 'priority_action_plan.md';
-    const filePath = path.join(analysisDir, filename);
+    const filePath = path.join(perPageDir, filename);
 
     // Group actions by type and priority
     const actionsByType = this._groupActionsByType(perPageAnalysis);
@@ -352,7 +371,8 @@ By implementing these recommendations:
 - Time to see results: 3-6 months
 
 ---
-*Report generated on ${new Date().toLocaleString()}*
+*Report generated on ${new Date().toLocaleString()}*  
+*Part of organized analysis session structure*
 `;
 
     await fs.writeFile(filePath, content, 'utf8');
@@ -439,6 +459,66 @@ By implementing these recommendations:
     } catch {
       await fs.mkdir(dirPath, { recursive: true });
       logger.info(`Created directory: ${dirPath}`);
+    }
+  }
+
+  // Utility method to get all reports for a specific session
+  async getSessionReports(slug, timestamp) {
+    try {
+      const baseReportsDir = require('../config').paths.reportsDir || path.join(__dirname, '../../reports');
+      const sessionDir = path.join(baseReportsDir, slug, timestamp);
+      const perPageDir = path.join(sessionDir, 'per_page_analysis');
+      
+      const reports = {
+        sessionDirectory: sessionDir,
+        perPageDirectory: perPageDir,
+        files: {
+          comprehensive: null,
+          executive: null,
+          perPageSummary: null,
+          actionPlan: null,
+          individualPages: []
+        }
+      };
+
+      // Check for main reports in session directory
+      try {
+        await fs.access(path.join(sessionDir, 'comprehensive_analysis.txt'));
+        reports.files.comprehensive = path.join(sessionDir, 'comprehensive_analysis.txt');
+      } catch {}
+
+      try {
+        await fs.access(path.join(sessionDir, 'executive_summary.md'));
+        reports.files.executive = path.join(sessionDir, 'executive_summary.md');
+      } catch {}
+
+      // Check for per-page reports
+      try {
+        await fs.access(perPageDir);
+        const perPageFiles = await fs.readdir(perPageDir);
+        
+        for (const file of perPageFiles) {
+          const filePath = path.join(perPageDir, file);
+          
+          if (file === 'per_page_analysis_summary.md') {
+            reports.files.perPageSummary = filePath;
+          } else if (file === 'priority_action_plan.md') {
+            reports.files.actionPlan = filePath;
+          } else if (file.startsWith('page_') && file.endsWith('.md')) {
+            reports.files.individualPages.push(filePath);
+          }
+        }
+      } catch {}
+
+      return reports;
+      
+    } catch (error) {
+      workflowLogger.error('Failed to get session reports', {
+        slug,
+        timestamp,
+        error: error.message
+      });
+      throw error;
     }
   }
 }

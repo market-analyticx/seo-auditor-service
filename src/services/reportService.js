@@ -1,4 +1,4 @@
-// src/services/reportService.js - Enhanced with executive summary
+// src/services/reportService.js - Enhanced with organized folder structure
 const fs = require('fs').promises;
 const path = require('path');
 const logger = require('../utils/logger');
@@ -7,33 +7,107 @@ const config = require('../config');
 const auditConfig = require('../config/audit');
 
 class ReportService {
+  constructor() {
+    this.baseReportsDir = config.paths.reportsDir || path.join(__dirname, '../../reports');
+  }
+
+  // Create organized folder structure: reports/slug/timestamp/
+  async createReportDirectory(slug) {
+    try {
+      // Ensure base reports directory exists
+      await this._ensureDirectoryExists(this.baseReportsDir);
+      
+      // Create slug-specific directory
+      const slugDir = path.join(this.baseReportsDir, slug);
+      await this._ensureDirectoryExists(slugDir);
+      
+      // Create timestamp-specific directory
+      const timestamp = new Date().toISOString()
+        .replace(/:/g, '-')
+        .replace(/\./g, '-')
+        .substring(0, 19); // YYYY-MM-DDTHH-MM-SS
+      
+      const timestampDir = path.join(slugDir, timestamp);
+      await this._ensureDirectoryExists(timestampDir);
+      
+      workflowLogger.info('Created organized report directory structure', {
+        slug,
+        timestamp,
+        timestampDir,
+        structure: {
+          base: this.baseReportsDir,
+          slug: slugDir,
+          session: timestampDir
+        }
+      });
+      
+      return {
+        baseDir: this.baseReportsDir,
+        slugDir: slugDir,
+        sessionDir: timestampDir,
+        timestamp: timestamp
+      };
+      
+    } catch (error) {
+      workflowLogger.error('Failed to create report directory structure', {
+        slug,
+        error: error.message
+      });
+      throw error;
+    }
+  }
+
   async saveComprehensiveReport(slug, analysis) {
-    const reportsDir = config.paths.reportsDir || path.join(__dirname, '../../reports');
-    await this._ensureDirectoryExists(reportsDir);
-    
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const filename = `${slug}_comprehensive_seo_analysis_${timestamp}.txt`;
-    const filePath = path.join(reportsDir, filename);
-    
-    workflowLogger.info('Generating comprehensive report', { slug, filename });
-    const reportContent = this._generateReportContent(slug, analysis);
-    
-    await fs.writeFile(filePath, reportContent, 'utf8');
-    logger.info(`Saved comprehensive report to: ${filePath}`);
-    
-    return filePath;
+    try {
+      // Create organized directory structure
+      const directories = await this.createReportDirectory(slug);
+      
+      // Save comprehensive analysis in the session directory
+      const filename = 'comprehensive_analysis.txt';
+      const filePath = path.join(directories.sessionDir, filename);
+      
+      workflowLogger.info('Generating comprehensive report', { 
+        slug, 
+        filename,
+        sessionDir: directories.sessionDir
+      });
+      
+      const reportContent = this._generateReportContent(slug, analysis);
+      await fs.writeFile(filePath, reportContent, 'utf8');
+      
+      logger.info(`Saved comprehensive report to: ${filePath}`);
+      workflowLogger.info('Comprehensive report saved', {
+        slug,
+        filePath,
+        contentLength: reportContent.length,
+        directories
+      });
+      
+      return {
+        filePath,
+        filename,
+        directories,
+        contentLength: reportContent.length
+      };
+      
+    } catch (error) {
+      workflowLogger.error('Failed to save comprehensive report', {
+        slug,
+        error: error.message
+      });
+      throw error;
+    }
   }
 
   async generateExecutiveSummary(slug, siteAnalysis, perPageAnalysis, pageData) {
     try {
       workflowLogger.info('Generating executive summary', { slug });
 
-      const reportsDir = config.paths.reportsDir || path.join(__dirname, '../../reports');
-      await this._ensureDirectoryExists(reportsDir);
+      // Create organized directory structure (reuse if already created)
+      const directories = await this.createReportDirectory(slug);
       
-      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-      const filename = `${slug}_executive_summary_${timestamp}.md`;
-      const filePath = path.join(reportsDir, filename);
+      const filename = 'executive_summary.md';
+      const filePath = path.join(directories.sessionDir, filename);
 
       const summaryContent = this._generateExecutiveSummaryContent(
         slug, 
@@ -47,17 +121,170 @@ class ReportService {
       workflowLogger.info('Executive summary generated', { 
         slug, 
         filePath,
-        contentLength: summaryContent.length 
+        contentLength: summaryContent.length,
+        sessionDir: directories.sessionDir
       });
 
       return {
         filePath,
         filename,
-        summary: this._extractKeyMetrics(siteAnalysis, perPageAnalysis, pageData)
+        directories,
+        summary: this._extractKeyMetrics(siteAnalysis, perPageAnalysis, pageData),
+        contentLength: summaryContent.length
       };
 
     } catch (error) {
       workflowLogger.error('Executive summary generation failed', {
+        slug,
+        error: error.message
+      });
+      throw error;
+    }
+  }
+
+  // Get the latest session directory for a slug (useful for per-page reports)
+  async getLatestSessionDirectory(slug) {
+    try {
+      const slugDir = path.join(this.baseReportsDir, slug);
+      
+      // Check if slug directory exists
+      try {
+        await fs.access(slugDir);
+      } catch {
+        // If slug directory doesn't exist, create new structure
+        return await this.createReportDirectory(slug);
+      }
+      
+      // Get all session directories and find the latest
+      const entries = await fs.readdir(slugDir, { withFileTypes: true });
+      const sessionDirs = entries
+        .filter(entry => entry.isDirectory())
+        .map(entry => entry.name)
+        .sort()
+        .reverse(); // Latest first
+      
+      if (sessionDirs.length === 0) {
+        // No existing sessions, create new
+        return await this.createReportDirectory(slug);
+      }
+      
+      const latestSession = sessionDirs[0];
+      const sessionDir = path.join(slugDir, latestSession);
+      
+      return {
+        baseDir: this.baseReportsDir,
+        slugDir: slugDir,
+        sessionDir: sessionDir,
+        timestamp: latestSession
+      };
+      
+    } catch (error) {
+      workflowLogger.error('Failed to get latest session directory', {
+        slug,
+        error: error.message
+      });
+      throw error;
+    }
+  }
+
+  // List all analysis sessions for a slug
+  async listAnalysisSessions(slug) {
+    try {
+      const slugDir = path.join(this.baseReportsDir, slug);
+      
+      try {
+        await fs.access(slugDir);
+      } catch {
+        return []; // No sessions exist
+      }
+      
+      const entries = await fs.readdir(slugDir, { withFileTypes: true });
+      const sessions = [];
+      
+      for (const entry of entries) {
+        if (entry.isDirectory()) {
+          const sessionDir = path.join(slugDir, entry.name);
+          try {
+            const stats = await fs.stat(sessionDir);
+            const files = await fs.readdir(sessionDir);
+            
+            sessions.push({
+              timestamp: entry.name,
+              path: sessionDir,
+              created: stats.birthtime,
+              modified: stats.mtime,
+              fileCount: files.length,
+              files: files
+            });
+          } catch (statError) {
+            workflowLogger.warn('Failed to get session stats', {
+              slug,
+              session: entry.name,
+              error: statError.message
+            });
+          }
+        }
+      }
+      
+      // Sort by timestamp (newest first)
+      sessions.sort((a, b) => new Date(b.created) - new Date(a.created));
+      
+      return sessions;
+      
+    } catch (error) {
+      workflowLogger.error('Failed to list analysis sessions', {
+        slug,
+        error: error.message
+      });
+      return [];
+    }
+  }
+
+  // Clean up old analysis sessions (keep only N most recent)
+  async cleanupOldSessions(slug, keepCount = 5) {
+    try {
+      const sessions = await this.listAnalysisSessions(slug);
+      
+      if (sessions.length <= keepCount) {
+        workflowLogger.info('No cleanup needed', {
+          slug,
+          sessionCount: sessions.length,
+          keepCount
+        });
+        return { removed: 0, kept: sessions.length };
+      }
+      
+      const sessionsToRemove = sessions.slice(keepCount);
+      let removedCount = 0;
+      
+      for (const session of sessionsToRemove) {
+        try {
+          await fs.rm(session.path, { recursive: true, force: true });
+          removedCount++;
+          workflowLogger.info('Removed old session', {
+            slug,
+            session: session.timestamp,
+            path: session.path
+          });
+        } catch (removeError) {
+          workflowLogger.error('Failed to remove old session', {
+            slug,
+            session: session.timestamp,
+            error: removeError.message
+          });
+        }
+      }
+      
+      workflowLogger.info('Session cleanup completed', {
+        slug,
+        removedCount,
+        keptCount: sessions.length - removedCount
+      });
+      
+      return { removed: removedCount, kept: sessions.length - removedCount };
+      
+    } catch (error) {
+      workflowLogger.error('Session cleanup failed', {
         slug,
         error: error.message
       });
@@ -377,7 +604,7 @@ Based on current performance and optimization potential:
     } catch {
       await fs.mkdir(dirPath, { recursive: true });
       logger.info(`Created directory: ${dirPath}`);
-      workflowLogger.info('Created reports directory', { path: dirPath });
+      workflowLogger.info('Created directory', { path: dirPath });
     }
   }
 }
